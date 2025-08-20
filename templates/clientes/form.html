@@ -1,0 +1,25 @@
+{% extends 'layout.html' %}
+{% block title %}Gestión de Clientes{% endblock %}
+{% block content %}
+<h2>{{ 'Editar Cliente' if cliente else 'Nuevo Cliente' }}</h2>
+<form id="clienteForm" method="post">
+  <div class="mb-3">
+    <label for="nombre" class="form-label">Nombre</label>
+    <input type="text" class="form-control" id="nombre" name="nombre" value="{{ cliente.nombre if cliente else '' }}" required>
+  </div>
+  <div class="mb-3">
+    <label for="dni" class="form-label">DNI</label>
+    <input type="text" class="form-control" id="dni" name="dni" value="{{ cliente.dni if cliente else '' }}" required>
+  </div>
+  <div class="mb-3">
+    <label for="cuit" class="form-label">CUIT</label>
+    <input type="text" class="form-control" id="cuit" name="cuit" value="{{ cliente.cuit if cliente else '' }}" required>
+  </div>
+  <div class="mb-3">
+    <label for="direccion" class="form-label">Dirección</label>
+    <input type="text" class="form-control" id="direccion" name="direccion" value="{{ cliente.direccion if cliente else '' }}">
+  </div>
+  <button type="submit" class="btn btn-primary">Guardar</button>
+</form>
+<script src="{{ url_for('static', filename='scripts/clientes_offline.js') }}"></script>
+{% endblock %}
