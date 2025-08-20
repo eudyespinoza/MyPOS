@@ -154,7 +154,14 @@ function addToCartConfirmed() {
             quantity: quantity,
             multiplo: currentProductToAdd.multiplo,
             unidadMedida: currentProductToAdd.unidadMedida,
-            available: true // Asumimos disponible inicialmente
+            available: true, // Asumimos disponible inicialmente
+            modalidad_entrega: null,
+            lat: null,
+            lng: null,
+            costo_flete: 0,
+            id_linea: null
+            discount: 0,
+            surcharge: 0
         });
     }
     updateCartDisplay();
@@ -190,10 +197,12 @@ function updateCartDisplay() {
     let total = 0;
 
     if (cart.items.length === 0) {
-        cartTable.innerHTML = '<tr><td colspan="5" class="text-center text-muted">El carrito está vacío</td></tr>';
+        cartTable.innerHTML = '<tr><td colspan="8" class="text-center text-muted">El carrito está vacío</td></tr>';
     } else {
         cart.items.forEach(item => {
-            const itemTotal = item.price * item.quantity;
+            item.discount = item.discount || 0;
+            item.surcharge = item.surcharge || 0;
+            const itemTotal = (item.price * item.quantity) - item.discount + item.surcharge;
             total += itemTotal;
             const row = document.createElement('tr');
             row.innerHTML = `
@@ -206,6 +215,10 @@ function updateCartDisplay() {
                     <input type="number" class="form-control form-control-sm price-input" value="${item.price}" min="0" step="0.01" data-product-id="${item.productId}">
                 </td>
                 <td class="line-total">$${formatearMoneda(itemTotal)}</td>
+                <td>$${formatearMoneda(item.price)}</td>
+                <td><input type="number" class="form-control form-control-sm discount-input" value="${item.discount}" min="0" step="0.01" data-product-id="${item.productId}"></td>
+                <td><input type="number" class="form-control form-control-sm surcharge-input" value="${item.surcharge}" min="0" step="0.01" data-product-id="${item.productId}"></td>
+                <td>$${formatearMoneda(itemTotal)}</td>
                 <td><button class="btn btn-danger btn-sm" onclick="removeFromCart('${item.productId}')">Eliminar</button></td>
             `;
             cartTable.appendChild(row);
@@ -230,6 +243,22 @@ function updateCartDisplay() {
                     updateCartDisplay();
                     saveCartToIndexedDB();
                 }
+            // Evento para descuento
+            const discountInput = row.querySelector('.discount-input');
+            discountInput.addEventListener('change', (e) => {
+                const newDiscount = parseFloat(e.target.value) || 0;
+                item.discount = newDiscount;
+                updateCartDisplay();
+                saveCartToIndexedDB();
+            });
+
+            // Evento para recargo
+            const surchargeInput = row.querySelector('.surcharge-input');
+            surchargeInput.addEventListener('change', (e) => {
+                const newSurcharge = parseFloat(e.target.value) || 0;
+                item.surcharge = newSurcharge;
+                updateCartDisplay();
+                saveCartToIndexedDB();
             });
         });
     }
@@ -439,7 +468,18 @@ function loadCartFromIndexedDB() {
 
         request.onsuccess = (event) => {
             const result = event.target.result;
-            resolve(result ? result.cart : null);
+            let loadedCart = result ? result.cart : null;
+            if (loadedCart && Array.isArray(loadedCart.items)) {
+                loadedCart.items = loadedCart.items.map(item => ({
+                    modalidad_entrega: null,
+                    lat: null,
+                    lng: null,
+                    costo_flete: 0,
+                    id_linea: null,
+                    ...item
+                }));
+            }
+            resolve(loadedCart);
         };
 
         request.onerror = (event) => {

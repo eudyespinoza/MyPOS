@@ -1,0 +1,34 @@
+{% extends 'layout.html' %}
+{% block title %}Saldos por Vendedor{% endblock %}
+{% block content %}
+<h1>Saldos por Vendedor</h1>
+<form method="get" class="row g-3 mb-3">
+  <div class="col-md-4">
+    <input type="date" name="start_date" value="{{ start_date }}" class="form-control" required>
+  </div>
+  <div class="col-md-4">
+    <input type="date" name="end_date" value="{{ end_date }}" class="form-control" required>
+  </div>
+  <div class="col-md-4">
+    <button type="submit" class="btn btn-primary">Filtrar</button>
+  </div>
+</form>
+{% if data %}
+<table class="table table-striped">
+  <thead>
+    <tr>
+      <th>Vendedor</th><th>Saldo</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in data %}
+    <tr>
+      <td>{{ s.vendedor }}</td><td>{{ s.saldo }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<a class="btn btn-outline-secondary" href="{{ url_for('caja.reportes_saldos_pdf', start_date=start_date, end_date=end_date) }}">Descargar PDF</a>
+<a class="btn btn-outline-secondary" href="{{ url_for('caja.reportes_saldos_excel', start_date=start_date, end_date=end_date) }}">Descargar Excel</a>
+{% endif %}
+{% endblock %}

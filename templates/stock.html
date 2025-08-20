@@ -1,0 +1,67 @@
+{% extends 'layout.html' %}
+
+{% block title %}Stock{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+  <ul class="nav nav-tabs" id="priceTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="regular-tab" data-bs-toggle="tab" data-bs-target="#regular" type="button" role="tab">Regular</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="applog-tab" data-bs-toggle="tab" data-bs-target="#applog" type="button" role="tab">Applog</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="outlet-tab" data-bs-toggle="tab" data-bs-target="#outlet" type="button" role="tab">Outlet</button>
+    </li>
+  </ul>
+  <div class="tab-content mt-3" id="priceTabsContent">
+    <div class="tab-pane fade show active" id="regular" role="tabpanel" aria-labelledby="regular-tab">
+      <table class="table table-striped">
+        <thead>
+          <tr><th>SKU</th><th>Precio</th></tr>
+        </thead>
+        <tbody>
+          {% for item in precios %}
+          <tr>
+            <td>{{ item.codigo }}</td>
+            <td>{{ item.precio_regular }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="tab-pane fade" id="applog" role="tabpanel" aria-labelledby="applog-tab">
+      <table class="table table-striped">
+        <thead>
+          <tr><th>SKU</th><th>Precio</th></tr>
+        </thead>
+        <tbody>
+          {% for item in precios %}
+          <tr>
+            <td>{{ item.codigo }}</td>
+            <td>{{ item.precio_applog }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="tab-pane fade" id="outlet" role="tabpanel" aria-labelledby="outlet-tab">
+      <table class="table table-striped">
+        <thead>
+          <tr><th>SKU</th><th>Precio</th></tr>
+        </thead>
+        <tbody>
+          {% for item in precios %}
+          <tr>
+            <td>{{ item.codigo }}</td>
+            <td>{{ item.precio_outlet }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
