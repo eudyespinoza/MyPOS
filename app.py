@@ -11,6 +11,15 @@ from auth import auth_bp, login_required, logout
 from blueprints.autenticacion_avanzada import autenticacion_avanzada_bp
 from blueprints.facturacion_arca import facturacion_arca_bp
 from blueprints.secuencia_numerica import secuencia_bp
+from connectors.d365_interface import (
+    run_crear_presupuesto_batch,
+    run_obtener_presupuesto_d365,
+    run_actualizar_presupuesto_d365,
+    run_validar_cliente_existente,
+    run_alta_cliente_d365,
+    guardar_presupuesto_local,
+    obtener_presupuestos_locales,
+)
 from blueprints.caja import caja_bp
 from blueprints.pagos import pagos_bp
 from blueprints.clientes import clientes_bp
@@ -19,6 +28,7 @@ from connectors.get_token import get_access_token_d365, get_access_token_d365_qa
 from db.database import obtener_datos_tienda_por_id, obtener_empleados_by_email, actualizar_last_store, obtener_contador_pdf, save_cart, get_cart
 from functools import lru_cache
 from services.email_service import enviar_correo_fallo
+from services.product_index import index_products, search_products
 import os
 import io
 import datetime
@@ -535,6 +545,13 @@ def config_secuencias():
         return redirect(url_for('productos'))
     return render_template('config_secuencias.html')
 
+
+@app.route('/presupuestos')
+@login_required
+def presupuestos():
+    """Página simple para gestionar búsqueda y recuperación de presupuestos."""
+    return render_template('presupuestos.html')
+
 @app.route('/api/stock/<codigo>/<store>')
 def api_stock_codigo_store(codigo, store):
     try:
@@ -762,6 +779,7 @@ def create_quotation():
             return jsonify({"error": error}), 500
 
         logger.info(f"Presupuesto creado: {quotation_number}")
+        guardar_presupuesto_local(quotation_number)
         return jsonify({"quotation_number": quotation_number}), 201
 
     except Exception as e:
@@ -1363,6 +1381,58 @@ def get_user_cart():
     except Exception as e:
         logger.error(f"Error al recuperar carrito: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/quotations', methods=['GET'])
+@login_required
+def list_saved_quotations():
+    """Retorna los números de presupuestos almacenados localmente."""
+    return jsonify(obtener_presupuestos_locales())
+
+
+@app.route('/api/products/index', methods=['POST'])
+@login_required
+def api_index_productos():
+    """Indexa productos en una colección Mongo en memoria."""
+    table = obtener_productos_cache()
+    if table is None:
+        return jsonify({"error": "No hay productos para indexar"}), 500
+    try:
+        df = table.to_pandas()
+    except Exception as e:
+        logger.error(f"Error convirtiendo productos a DataFrame: {e}")
+        return jsonify({"error": "Error procesando productos"}), 500
+    productos = []
+    for _, row in df.iterrows():
+        sku = row.get('ProductNumber') or row.get('productId') or row.get('sku')
+        descripcion = row.get('ProductName') or row.get('productName') or row.get('description')
+        productos.append({"sku": str(sku), "description": descripcion})
+    index_products(productos)
+    return jsonify({"indexed": len(productos)})
+
+
+@app.route('/api/products/search')
+@login_required
+def api_search_productos():
+    """Busca productos indexados por SKU o descripción."""
+    query = request.args.get('query', '')
+    resultados = search_products(query)
+    if not resultados:
+        # Intentar indexar productos si el índice está vacío
+        table = obtener_productos_cache()
+        if table is not None:
+            try:
+                df = table.to_pandas()
+                productos = []
+                for _, row in df.iterrows():
+                    sku = row.get('ProductNumber') or row.get('productId') or row.get('sku')
+                    descripcion = row.get('ProductName') or row.get('productName') or row.get('description')
+                    productos.append({"sku": str(sku), "description": descripcion})
+                index_products(productos)
+                resultados = search_products(query)
+            except Exception as e:
+                logger.error(f"Error indexando productos durante la búsqueda: {e}")
+    return jsonify(resultados)
 
 @app.route('/api/clientes/search')
 @login_required
