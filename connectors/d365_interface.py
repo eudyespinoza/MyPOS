@@ -21,6 +21,7 @@ config.read(CONFIG_PATH)
 LOG_DIR = os.path.join(ROOT_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "d365_interface.log")
+BUDGETS_FILE = os.path.join(LOG_DIR, "budgets.json")
 
 logging.basicConfig(
     filename=LOG_FILE,
@@ -58,6 +59,33 @@ def obtener_numeros_presupuesto():
     except Exception as e:
         logging.error(f"Error al obtener números de presupuesto: {e}")
         return []
+
+def _load_saved_budgets():
+    """Lee los números de presupuesto almacenados localmente."""
+    if os.path.exists(BUDGETS_FILE):
+        try:
+            with open(BUDGETS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as exc:
+            logging.error(f"No se pudo leer {BUDGETS_FILE}: {exc}")
+    return []
+
+
+def guardar_presupuesto_local(numero):
+    """Guarda un número de presupuesto en un archivo local para su recuperación posterior."""
+    budgets = _load_saved_budgets()
+    budgets.append({"id": numero, "fecha": datetime.utcnow().isoformat()})
+    try:
+        with open(BUDGETS_FILE, "w", encoding="utf-8") as f:
+            json.dump(budgets, f, ensure_ascii=False, indent=2)
+        logging.info(f"Presupuesto {numero} almacenado localmente")
+    except Exception as exc:
+        logging.error(f"No se pudo escribir {BUDGETS_FILE}: {exc}")
+
+
+def obtener_presupuestos_locales():
+    """Devuelve la lista de números de presupuesto almacenados localmente."""
+    return _load_saved_budgets()
 
 def load_d365_config():
     if 'd365' not in config:
@@ -227,6 +255,7 @@ async def crear_presupuesto_batch(datos_cabecera, lineas, access_token):
                 enviar_correo_fallo("crear_presupuesto_batch", error)
                 return sales_quotation_number, error
             logging.info(f"Presupuesto completo creado exitosamente: {sales_quotation_number}")
+            guardar_presupuesto_local(sales_quotation_number)
             session['new_quotation'] = sales_quotation_number
             return sales_quotation_number, None
 

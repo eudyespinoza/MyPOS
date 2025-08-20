@@ -75,5 +75,63 @@
   });
 
   cargarPresupuestos();
+{% extends "layout.html" %}
+
+{% block title %}Presupuestos{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <h2 class="mb-4">Gestión de Presupuestos</h2>
+  <div class="mb-3">
+    <label for="quotationSearch" class="form-label">Buscar Presupuesto</label>
+    <input id="quotationSearch" class="form-control" placeholder="ID de presupuesto">
+    <button class="btn btn-primary mt-2" onclick="buscarPresupuesto()">Buscar</button>
+  </div>
+  <div class="mb-3">
+    <button class="btn btn-success" onclick="guardarCarrito()">Guardar Carrito</button>
+    <button class="btn btn-secondary" onclick="restaurarCarrito()">Restaurar Carrito</button>
+    <button class="btn btn-outline-info" onclick="listarPresupuestos()">Ver Presupuestos Guardados</button>
+  </div>
+  <ul id="listaPresupuestos" class="mb-3"></ul>
+  <pre id="quotationResult" class="bg-light p-3"></pre>
+</div>
+
+<script>
+async function buscarPresupuesto() {
+  const id = document.getElementById('quotationSearch').value;
+  if(!id) return;
+  const res = await fetch(`/api/d365_quotation/${id}`);
+  const data = await res.json();
+  document.getElementById('quotationResult').textContent = JSON.stringify(data, null, 2);
+}
+
+async function guardarCarrito() {
+  const cart = window.cart || {};
+  const res = await fetch('/api/save_cart', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cart, timestamp: Date.now() })
+  });
+  const data = await res.json();
+  alert(data.message || data.error);
+}
+
+async function restaurarCarrito() {
+  const res = await fetch('/api/get_user_cart');
+  const data = await res.json();
+  document.getElementById('quotationResult').textContent = JSON.stringify(data, null, 2);
+}
+
+async function listarPresupuestos(){
+  const res = await fetch('/api/quotations');
+  const data = await res.json();
+  const ul = document.getElementById('listaPresupuestos');
+  ul.innerHTML = '';
+  data.forEach(q => {
+    const li = document.createElement('li');
+    li.textContent = q.id;
+    ul.appendChild(li);
+  });
+}
 </script>
 {% endblock %}

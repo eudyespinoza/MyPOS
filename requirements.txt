@@ -1,0 +1,6 @@
+Flask
+redis
+pyodbc
+requests
+apscheduler
+gunicorn
