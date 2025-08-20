@@ -18,6 +18,7 @@ from db.database import obtener_datos_tienda_por_id, obtener_empleados_by_email,
 from functools import lru_cache
 from services.email_service import enviar_correo_fallo
 import os
+import io
 import datetime
 import pyarrow.parquet as pq
 import pyarrow as pa
@@ -27,11 +28,40 @@ import threading
 from datetime import timedelta, timezone
 import json
 import requests
+import redis
 from config import CACHE_FILE_PRODUCTOS, CACHE_FILE_STOCK, CACHE_FILE_CLIENTES, CACHE_FILE_EMPLEADOS, CACHE_FILE_ATRIBUTOS
 
 clientes_lock = threading.Lock()
 
 app = Flask(__name__, static_folder='static')
+
+# 🔹 Configuración de Redis para caché
+redis_client = redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+
+
+def cache_get_json(key):
+    data = redis_client.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+
+def cache_set_json(key, value, ex=3600):
+    redis_client.set(key, json.dumps(value), ex=ex)
+
+
+def cache_get_table(key):
+    data = redis_client.get(key)
+    if data:
+        buffer = io.BytesIO(data)
+        return pq.read_table(buffer)
+    return None
+
+
+def cache_set_table(key, table, ex=3600):
+    buffer = io.BytesIO()
+    pq.write_table(table, buffer)
+    redis_client.set(key, buffer.getvalue(), ex=ex)
 
 # 🔹 Inicializar la base de datos
 init_db()
@@ -111,6 +141,10 @@ def actualizar_cache_clientes():
 
 def obtener_clientes_cache():
     """Obtiene los clientes desde el archivo Parquet en memoria."""
+    cached_clients = cache_get_json('clientes_cache')
+    if cached_clients:
+        return cached_clients
+
     if os.path.exists(CACHE_FILE_CLIENTES):
         mod_time = datetime.date.fromtimestamp(os.path.getmtime(CACHE_FILE_CLIENTES))
         if mod_time != datetime.date.today():
@@ -126,6 +160,7 @@ def obtener_clientes_cache():
             logger.error("No se pudo cargar la tabla de clientes desde el Parquet.")
             return []
         clients = [{col: table[col][i].as_py() for col in table.column_names} for i in range(len(table))]
+        cache_set_json('clientes_cache', clients, ex=86400)
         return clients
     except Exception as e:
         logger.error(f"Error al leer clientes desde Parquet después de actualización: {e}", exc_info=True)
@@ -133,6 +168,10 @@ def obtener_clientes_cache():
 
 def obtener_productos_cache():
     """Obtiene los productos desde el archivo Parquet en memoria."""
+    cached_table = cache_get_table('productos_cache')
+    if cached_table is not None:
+        return cached_table
+
     if os.path.exists(CACHE_FILE_PRODUCTOS):
         mod_time = datetime.date.fromtimestamp(os.path.getmtime(CACHE_FILE_PRODUCTOS))
         if mod_time != datetime.date.today():
@@ -147,6 +186,7 @@ def obtener_productos_cache():
         if table is None:
             logger.error("No se pudo cargar la tabla de productos desde el Parquet.")
             return None
+        cache_set_table('productos_cache', table, ex=86400)
         return table
     except Exception as e:
         logger.error(f"Error al leer productos desde Parquet: {e}", exc_info=True)
