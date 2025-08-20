@@ -154,6 +154,100 @@ def obtener_stock_fabric():
         conexion_fabric.close()
         logging.info("Conexión con Fabric cerrada.")
 
+def obtener_stock_categoria(categoria_id):
+    """
+    Obtiene el stock para una categoría específica desde Fabric.
+
+    :param categoria_id: Identificador de la categoría.
+    :return: Lista de diccionarios con la información de stock por categoría.
+    """
+    query = """
+    SELECT Codigo, Almacen_365, StockFisico, DisponibleVenta, DisponibleEntrega, Comprometido
+    FROM DataStagingWarehouse.dbo.Stock_Buscador
+    WHERE CategoriaId = ?
+    """
+
+    conexion_fabric = conectar_fabric_db()
+    if not conexion_fabric:
+        logging.error("No se pudo conectar a la base de datos de Fabric.")
+        return []
+
+    try:
+        cursor = conexion_fabric.cursor()
+        cursor.execute(query, (categoria_id,))
+        registros = cursor.fetchall()
+
+        if not registros:
+            logging.info(f"No se encontraron datos de stock para la categoría {categoria_id}.")
+            return []
+
+        resultado = [
+            {
+                "codigo": row.Codigo,
+                "almacen_365": row.Almacen_365,
+                "stock_fisico": row.StockFisico,
+                "disponible_venta": row.DisponibleVenta,
+                "disponible_entrega": row.DisponibleEntrega,
+                "comprometido": row.Comprometido,
+            }
+            for row in registros
+        ]
+        return resultado
+
+    except Exception as e:
+        logging.error(f"Error al obtener stock por categoría desde Fabric: {e}")
+        return []
+
+    finally:
+        conexion_fabric.close()
+        logging.info("Conexión con Fabric cerrada.")
+
+def obtener_lista_precios_sucursal(sucursal_id):
+    """
+    Obtiene la lista de precios para una sucursal específica desde Fabric.
+
+    :param sucursal_id: Identificador de la sucursal.
+    :return: Lista de diccionarios con precios regular, applog y outlet.
+    """
+    query = """
+    SELECT Codigo, PrecioRegular, PrecioApplog, PrecioOutlet
+    FROM DataStagingWarehouse.dbo.Lista_Precios_Buscador
+    WHERE SucursalId = ?
+    """
+
+    conexion_fabric = conectar_fabric_db()
+    if not conexion_fabric:
+        logging.error("No se pudo conectar a la base de datos de Fabric.")
+        return []
+
+    try:
+        cursor = conexion_fabric.cursor()
+        cursor.execute(query, (sucursal_id,))
+        registros = cursor.fetchall()
+
+        if not registros:
+            logging.info(f"No se encontraron precios para la sucursal {sucursal_id}.")
+            return []
+
+        resultado = [
+            {
+                "codigo": row.Codigo,
+                "precio_regular": row.PrecioRegular,
+                "precio_applog": row.PrecioApplog,
+                "precio_outlet": row.PrecioOutlet,
+            }
+            for row in registros
+        ]
+        return resultado
+
+    except Exception as e:
+        logging.error(f"Error al obtener lista de precios desde Fabric: {e}")
+        return []
+
+    finally:
+        conexion_fabric.close()
+        logging.info("Conexión con Fabric cerrada.")
+
 def obtener_grupos_cumplimiento_fabric():
     """
     Obtiene los grupos de cumplimiento desde Fabric y los almacena en la base de datos local.
