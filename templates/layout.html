@@ -459,6 +459,12 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCEcZuoclTEV-n1maYIvTQ8C9LkWutbcus&libraries=places&callback=initMap" async defer></script>
 <script src="{{ url_for('static', filename='scripts/scripts.js') }}"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/service-worker.js');
+}
+</script>
+<script src="{{ url_for('static', filename='scripts/offline.js') }}"></script>
 {% block extra_scripts %}{% endblock %}
 <script>
   // Initialize Toasts

@@ -1,23 +1,53 @@
-from flask import Flask, render_template, redirect, url_for, session, jsonify, request, send_from_directory, flash
+from flask import Flask, render_template, redirect, url_for, session, jsonify, request, send_from_directory, flash, send_file
 from db.database import init_db, obtener_atributos, obtener_stores_from_parquet, obtener_stock, \
     obtener_grupos_cumplimiento, obtener_empleados, obtener_todos_atributos, guardar_token_d365, obtener_token_d365, \
     obtener_producto_por_id, get_config_pos_by_ids
+    obtener_producto_por_id, buscar_productos_sap, obtener_producto_sap
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from db.fabric import obtener_atributos_fabric, obtener_stock_fabric, obtener_grupos_cumplimiento_fabric, \
-    obtener_empleados_fabric, obtener_datos_tiendas, run_obtener_datos_codigo_postal
+    obtener_empleados_fabric, obtener_datos_tiendas, run_obtener_datos_codigo_postal, \
+    obtener_stock_categoria, obtener_lista_precios_sucursal
 from auth import auth_bp, login_required, logout
 from blueprints.autenticacion_avanzada import autenticacion_avanzada_bp
 from blueprints.facturacion_arca import facturacion_arca_bp
 from blueprints.secuencia_numerica import secuencia_bp
 from blueprints.config_pos import config_pos_bp
+from blueprints.pagos import pagos_bp
+from connectors.d365_interface import (
+    run_crear_presupuesto_batch,
+    run_obtener_presupuesto_d365,
+    run_actualizar_presupuesto_d365,
+    run_validar_cliente_existente,
+    run_alta_cliente_d365,
+    guardar_numero_presupuesto,
+    obtener_numeros_presupuesto,
+)
+    guardar_presupuesto_local,
+    obtener_presupuestos_locales,
+)
+from blueprints.caja import caja_bp
+from blueprints.pagos import pagos_bp
+from blueprints.clientes import clientes_bp
 from connectors.d365_interface import run_crear_presupuesto_batch, run_obtener_presupuesto_d365, run_actualizar_presupuesto_d365, run_validar_cliente_existente, run_alta_cliente_d365
 from connectors.get_token import get_access_token_d365, get_access_token_d365_qa
 from db.database import obtener_datos_tienda_por_id, obtener_empleados_by_email, actualizar_last_store, obtener_contador_pdf, save_cart, get_cart
+from werkzeug.utils import secure_filename
+from db.database import (
+    obtener_datos_tienda_por_id,
+    obtener_empleados_by_email,
+    actualizar_last_store,
+    obtener_contador_pdf,
+    save_cart,
+    get_cart,
+)
 from functools import lru_cache
 from services.email_service import enviar_correo_fallo
+from services.search_service import indexar_productos, buscar_productos
+from services.product_index import index_products, search_products
 import os
+import io
 import datetime
 import pyarrow.parquet as pq
 import pyarrow as pa
@@ -27,11 +57,41 @@ import threading
 from datetime import timedelta, timezone
 import json
 import requests
+import io
+import redis
 from config import CACHE_FILE_PRODUCTOS, CACHE_FILE_STOCK, CACHE_FILE_CLIENTES, CACHE_FILE_EMPLEADOS, CACHE_FILE_ATRIBUTOS
 
 clientes_lock = threading.Lock()
 
 app = Flask(__name__, static_folder='static')
+
+# 🔹 Configuración de Redis para caché
+redis_client = redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+
+
+def cache_get_json(key):
+    data = redis_client.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+
+def cache_set_json(key, value, ex=3600):
+    redis_client.set(key, json.dumps(value), ex=ex)
+
+
+def cache_get_table(key):
+    data = redis_client.get(key)
+    if data:
+        buffer = io.BytesIO(data)
+        return pq.read_table(buffer)
+    return None
+
+
+def cache_set_table(key, table, ex=3600):
+    buffer = io.BytesIO()
+    pq.write_table(table, buffer)
+    redis_client.set(key, buffer.getvalue(), ex=ex)
 
 # 🔹 Inicializar la base de datos
 init_db()
@@ -111,6 +171,10 @@ def actualizar_cache_clientes():
 
 def obtener_clientes_cache():
     """Obtiene los clientes desde el archivo Parquet en memoria."""
+    cached_clients = cache_get_json('clientes_cache')
+    if cached_clients:
+        return cached_clients
+
     if os.path.exists(CACHE_FILE_CLIENTES):
         mod_time = datetime.date.fromtimestamp(os.path.getmtime(CACHE_FILE_CLIENTES))
         if mod_time != datetime.date.today():
@@ -126,6 +190,7 @@ def obtener_clientes_cache():
             logger.error("No se pudo cargar la tabla de clientes desde el Parquet.")
             return []
         clients = [{col: table[col][i].as_py() for col in table.column_names} for i in range(len(table))]
+        cache_set_json('clientes_cache', clients, ex=86400)
         return clients
     except Exception as e:
         logger.error(f"Error al leer clientes desde Parquet después de actualización: {e}", exc_info=True)
@@ -133,6 +198,10 @@ def obtener_clientes_cache():
 
 def obtener_productos_cache():
     """Obtiene los productos desde el archivo Parquet en memoria."""
+    cached_table = cache_get_table('productos_cache')
+    if cached_table is not None:
+        return cached_table
+
     if os.path.exists(CACHE_FILE_PRODUCTOS):
         mod_time = datetime.date.fromtimestamp(os.path.getmtime(CACHE_FILE_PRODUCTOS))
         if mod_time != datetime.date.today():
@@ -147,6 +216,7 @@ def obtener_productos_cache():
         if table is None:
             logger.error("No se pudo cargar la tabla de productos desde el Parquet.")
             return None
+        cache_set_table('productos_cache', table, ex=86400)
         return table
     except Exception as e:
         logger.error(f"Error al leer productos desde Parquet: {e}", exc_info=True)
@@ -484,6 +554,13 @@ def productos():
     last_store = session.get('last_store', 'BA001GC')
     return render_template('index.html', stores=stores, last_store=last_store)
 
+
+@app.route('/presupuestos')
+@login_required
+def presupuestos_page():
+    """Página para gestionar presupuestos y carritos."""
+    return render_template('presupuestos.html')
+
 @app.route('/config/secuencias')
 @login_required
 def config_secuencias():
@@ -510,6 +587,14 @@ def obtener_config_pos(tienda_id, pto_venta_id):
     if not config:
         return jsonify({'error': 'Configuración no encontrada'}), 404
     return jsonify(config)
+  
+
+@app.route('/presupuestos')
+@login_required
+def presupuestos():
+    """Página simple para gestionar búsqueda y recuperación de presupuestos."""
+    return render_template('presupuestos.html')
+
 
 @app.route('/api/stock/<codigo>/<store>')
 def api_stock_codigo_store(codigo, store):
@@ -549,6 +634,35 @@ def api_stock_codigo_store(codigo, store):
     except Exception as e:
         logger.error(f"Error en búsqueda de stock desde Parquet: {e}", exc_info=True)
         return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+
+@app.route('/api/stock_categoria/<categoria_id>')
+def api_stock_categoria(categoria_id):
+    """Endpoint que retorna el stock de una categoría."""
+    try:
+        datos = obtener_stock_categoria(categoria_id)
+        return jsonify(datos)
+    except Exception as e:
+        logger.error(f"Error al obtener stock por categoría: {e}", exc_info=True)
+        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+
+@app.route('/api/lista_precios/<sucursal_id>')
+def api_lista_precios_sucursal(sucursal_id):
+    """Endpoint que retorna la lista de precios de una sucursal."""
+    try:
+        precios = obtener_lista_precios_sucursal(sucursal_id)
+        return jsonify(precios)
+    except Exception as e:
+        logger.error(f"Error al obtener lista de precios: {e}", exc_info=True)
+        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+
+@app.route('/stock/<sucursal_id>')
+def stock_view(sucursal_id):
+    """Renderiza la página de stock con las listas de precios por sucursal."""
+    precios = obtener_lista_precios_sucursal(sucursal_id)
+    return render_template('stock.html', precios=precios, sucursal_id=sucursal_id)
 
 @app.route('/api/update_last_store', methods=['POST'])
 @login_required
@@ -654,6 +768,9 @@ def api_productos():
         df['precio_final_con_descuento'] = df['precio_final_con_descuento'].apply(lambda x: f"{x:,.2f}".replace(".", "X").replace(",", ".").replace("X", ","))
         df['total_disponible_venta'] = df['total_disponible_venta'].apply(lambda x: f"{x:,.2f}".replace(".", "X").replace(",", ".").replace("X", ","))
 
+        # Generar URL de imagen protegida para cada producto
+        df['imagen_url'] = df['numero_producto'].apply(lambda x: url_for('serve_image', filename=f"{x}.jpg"))
+
         paginated_products = df[offset:offset + items_per_page].to_dict('records')
         logger.info(f"Se encontraron {len(df)} productos para el store '{store}', paginados {len(paginated_products)}.")
         return jsonify(paginated_products)
@@ -738,6 +855,8 @@ def create_quotation():
             return jsonify({"error": error}), 500
 
         logger.info(f"Presupuesto creado: {quotation_number}")
+        guardar_numero_presupuesto(quotation_number)
+        guardar_presupuesto_local(quotation_number)
         return jsonify({"quotation_number": quotation_number}), 201
 
     except Exception as e:
@@ -841,6 +960,7 @@ def update_quotation(quotation_id):
             return jsonify({"error": error}), 500
 
         logger.info(f"Presupuesto {quotation_id} actualizado exitosamente")
+        guardar_numero_presupuesto(quotation_number)
         return jsonify({"quotation_number": quotation_number}), 200
 
     except Exception as e:
@@ -987,6 +1107,66 @@ def api_productos_by_code():
         return jsonify(products), 200
     except Exception as e:
         logger.error(f"Error en búsqueda de producto por código: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/sap/productos/search')
+@login_required
+def api_sap_productos_search():
+    """Endpoint para buscar productos almacenados desde SAP."""
+    try:
+        query = request.args.get('query', '').strip()
+        productos = buscar_productos_sap(query) if query else []
+        return jsonify(productos), 200
+    except Exception as e:
+        logger.error(f"Error en búsqueda de productos SAP: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/sap/productos/<codigo>')
+@login_required
+def api_sap_producto_by_code(codigo):
+    """Obtiene un producto específico desde la base SAP persistida."""
+    try:
+        producto = obtener_producto_sap(codigo)
+        if producto:
+            return jsonify(producto), 200
+        return jsonify({"error": "Producto no encontrado"}), 404
+    except Exception as e:
+        logger.error(f"Error obteniendo producto SAP por código: {e}", exc_info=True)
+        
+        
+@app.route('/api/index_products', methods=['POST'])
+@login_required
+def api_index_products():
+    """Indexa productos en MongoDB para búsquedas rápidas."""
+    try:
+        table = obtener_productos_cache()
+        if table is None:
+            return jsonify({"error": "No se pudo cargar los productos"}), 500
+        import pandas as pd
+        df = table.select(['Número de Producto', 'Nombre del Producto']).to_pandas()
+        productos = (
+            {"sku": row['Número de Producto'], "descripcion": row['Nombre del Producto']}
+            for _, row in df.iterrows()
+        )
+        count = indexar_productos(list(productos))
+        return jsonify({"indexed": count}), 200
+    except Exception as e:
+        logger.error(f"Error al indexar productos: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/search_products_index')
+@login_required
+def api_search_products_index():
+    """Busca productos en el índice de Mongo por SKU o descripción."""
+    term = request.args.get('q', '').strip()
+    try:
+        results = buscar_productos(term)
+        return jsonify(results), 200
+    except Exception as e:
+        logger.error(f"Error al buscar productos en índice: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/save_local_quotation', methods=['POST'])
@@ -1340,6 +1520,68 @@ def get_user_cart():
         logger.error(f"Error al recuperar carrito: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/quotation_numbers', methods=['GET'])
+@login_required
+def api_quotation_numbers():
+    """Devuelve los números de presupuesto almacenados localmente."""
+    try:
+        numeros = obtener_numeros_presupuesto()
+        return jsonify(numeros), 200
+    except Exception as e:
+        logger.error(f"Error al obtener números de presupuesto: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+@app.route('/api/quotations', methods=['GET'])
+@login_required
+def list_saved_quotations():
+    """Retorna los números de presupuestos almacenados localmente."""
+    return jsonify(obtener_presupuestos_locales())
+
+
+@app.route('/api/products/index', methods=['POST'])
+@login_required
+def api_index_productos():
+    """Indexa productos en una colección Mongo en memoria."""
+    table = obtener_productos_cache()
+    if table is None:
+        return jsonify({"error": "No hay productos para indexar"}), 500
+    try:
+        df = table.to_pandas()
+    except Exception as e:
+        logger.error(f"Error convirtiendo productos a DataFrame: {e}")
+        return jsonify({"error": "Error procesando productos"}), 500
+    productos = []
+    for _, row in df.iterrows():
+        sku = row.get('ProductNumber') or row.get('productId') or row.get('sku')
+        descripcion = row.get('ProductName') or row.get('productName') or row.get('description')
+        productos.append({"sku": str(sku), "description": descripcion})
+    index_products(productos)
+    return jsonify({"indexed": len(productos)})
+
+
+@app.route('/api/products/search')
+@login_required
+def api_search_productos():
+    """Busca productos indexados por SKU o descripción."""
+    query = request.args.get('query', '')
+    resultados = search_products(query)
+    if not resultados:
+        # Intentar indexar productos si el índice está vacío
+        table = obtener_productos_cache()
+        if table is not None:
+            try:
+                df = table.to_pandas()
+                productos = []
+                for _, row in df.iterrows():
+                    sku = row.get('ProductNumber') or row.get('productId') or row.get('sku')
+                    descripcion = row.get('ProductName') or row.get('productName') or row.get('description')
+                    productos.append({"sku": str(sku), "description": descripcion})
+                index_products(productos)
+                resultados = search_products(query)
+            except Exception as e:
+                logger.error(f"Error indexando productos durante la búsqueda: {e}")
+    return jsonify(resultados)
+
 @app.route('/api/clientes/search')
 @login_required
 def api_clientes_search():
@@ -1367,6 +1609,47 @@ def api_clientes_search():
         logger.error(f"Error en búsqueda de clientes desde Parquet: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+def upload_image_to_azure(file_stream, filename):
+    """Sube un archivo de imagen a Azure Blob Storage."""
+    from azure.storage.blob import BlobServiceClient
+    connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING', '')
+    container_name = os.getenv('AZURE_CONTAINER', 'product-images')
+    service = BlobServiceClient.from_connection_string(connection_string)
+    container = service.get_container_client(container_name)
+    container.upload_blob(name=filename, data=file_stream, overwrite=True)
+    return filename
+
+@app.route('/images/<path:filename>')
+@login_required
+def serve_image(filename):
+    """Recupera una imagen desde Azure Blob Storage y la sirve al cliente."""
+    try:
+        from azure.storage.blob import BlobServiceClient
+        connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING', '')
+        container_name = os.getenv('AZURE_CONTAINER', 'product-images')
+        service = BlobServiceClient.from_connection_string(connection_string)
+        blob_client = service.get_blob_client(container=container_name, blob=filename)
+        stream = io.BytesIO()
+        download_stream = blob_client.download_blob()
+        download_stream.readinto(stream)
+        stream.seek(0)
+        content_type = download_stream.properties.content_settings.content_type
+        return send_file(stream, mimetype=content_type)
+    except Exception as e:
+        logger.error(f"Error al servir imagen {filename}: {e}", exc_info=True)
+        return send_file(io.BytesIO(), mimetype='application/octet-stream'), 404
+
+@app.route('/upload_image', methods=['POST'])
+@login_required
+def upload_image():
+    """Endpoint para subir una imagen a Azure Blob Storage."""
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'error': 'No file provided'}), 400
+    filename = secure_filename(file.filename)
+    upload_image_to_azure(file.stream, filename)
+    return jsonify({'filename': filename, 'url': url_for('serve_image', filename=filename)}), 201
+
 @app.route('/static/<path:filename>')
 @login_required
 def serve_static(filename):
@@ -1378,6 +1661,10 @@ app.register_blueprint(autenticacion_avanzada_bp, url_prefix='/autenticacion_ava
 app.register_blueprint(facturacion_arca_bp, url_prefix='/modulo_facturacion_arca')
 app.register_blueprint(secuencia_bp, url_prefix='/api/secuencias')
 app.register_blueprint(config_pos_bp, url_prefix='/api/config_pos')
+app.register_blueprint(pagos_bp, url_prefix='/pagos')
+app.register_blueprint(caja_bp, url_prefix='/caja')
+app.register_blueprint(pagos_bp, url_prefix='/pagos')
+app.register_blueprint(clientes_bp, url_prefix='/clientes')
 
 # 🔹 Ejecutar la aplicación
 if __name__ == "__main__":
