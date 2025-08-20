@@ -1,10 +1,15 @@
 import os
 import csv
+import logging
 import requests
-from flask import Blueprint, request, jsonify, render_template
+from flask import Blueprint, jsonify, render_template, request
+from auth_module import login_required
+from connectors.payway import PaywayClient
 from db.database import guardar_pago, actualizar_estado_operacion
 
+logger = logging.getLogger('pagos')
 pagos_bp = Blueprint('pagos', __name__)
+_client = PaywayClient()
 
 BANK_API_URL = os.getenv('BANK_API_URL')
 
@@ -29,14 +34,19 @@ def validar_transferencia(referencia: str, monto: float) -> bool:
         except requests.RequestException:
             pass
 
-    conciliacion_path = os.path.join(os.path.dirname(__file__), '../conciliaciones.csv')
+    conciliacion_path = os.path.join(
+        os.path.dirname(__file__),
+        '../conciliaciones.csv',
+    )
     if os.path.exists(conciliacion_path) and referencia:
         with open(conciliacion_path, newline='', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
                 try:
-                    if (row.get('referencia') == referencia and
-                            float(row.get('monto', 0)) == float(monto)):
+                    if (
+                        row.get('referencia') == referencia
+                        and float(row.get('monto', 0)) == float(monto)
+                    ):
                         return True
                 except (TypeError, ValueError):
                     continue
@@ -55,7 +65,9 @@ def registrar_pago():
     }
     referencia = data.get('referencia')
 
-    if pagos['transferencia'] and not validar_transferencia(referencia, pagos['transferencia']):
+    if pagos['transferencia'] and not validar_transferencia(
+        referencia, pagos['transferencia']
+    ):
         return jsonify({'error': 'Transferencia no válida'}), 400
 
     guardar_pago(operacion_id, pagos)
@@ -67,14 +79,6 @@ def registrar_pago():
 def formulario_pagos():
     """Muestra el formulario de pagos."""
     return render_template('pagos.html')
-import logging
-from flask import Blueprint, jsonify, request
-from auth_module import login_required
-from connectors.payway import PaywayClient
-
-logger = logging.getLogger('pagos')
-pagos_bp = Blueprint('pagos', __name__)
-_client = PaywayClient()
 
 
 @pagos_bp.route('/pago', methods=['POST'])
