@@ -1,3 +1,80 @@
+{% extends 'layout.html' %}
+{% block title %}Presupuestos{% endblock %}
+{% block content %}
+<div class="container">
+  <h1 class="mb-4">Gestión de Presupuestos</h1>
+
+  <div class="mb-4">
+    <label for="searchTerm" class="form-label">Buscar producto por SKU o descripción</label>
+    <div class="input-group">
+      <input id="searchTerm" type="text" class="form-control" placeholder="SKU o descripción">
+      <button id="searchBtn" class="btn btn-primary" type="button">Buscar</button>
+    </div>
+    <ul id="searchResults" class="list-group mt-2"></ul>
+  </div>
+
+  <div class="mb-4">
+    <button id="saveCartBtn" class="btn btn-success me-2" type="button">Guardar Carrito</button>
+    <button id="restoreCartBtn" class="btn btn-secondary" type="button">Restaurar Carrito</button>
+  </div>
+
+  <div>
+    <h5>Números de presupuesto guardados</h5>
+    <ul id="quotationList" class="list-group"></ul>
+  </div>
+</div>
+
+<script>
+  async function cargarPresupuestos() {
+    try {
+      const res = await fetch('/api/quotation_numbers');
+      const data = await res.json();
+      const list = document.getElementById('quotationList');
+      list.innerHTML = '';
+      data.forEach(p => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item';
+        li.textContent = p.numero;
+        list.appendChild(li);
+      });
+    } catch (err) {
+      console.error('Error cargando presupuestos:', err);
+    }
+  }
+
+  document.getElementById('searchBtn').addEventListener('click', async () => {
+    const term = document.getElementById('searchTerm').value;
+    const res = await fetch(`/api/search_products_index?q=${encodeURIComponent(term)}`);
+    const data = await res.json();
+    const list = document.getElementById('searchResults');
+    list.innerHTML = '';
+    data.forEach(p => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item';
+      li.textContent = `${p.sku} - ${p.descripcion}`;
+      list.appendChild(li);
+    });
+  });
+
+  document.getElementById('saveCartBtn').addEventListener('click', async () => {
+    const cart = JSON.parse(localStorage.getItem('cart') || '{}');
+    const timestamp = new Date().toISOString();
+    await fetch('/api/save_user_cart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: '{{ session.get('email') }}', cart, timestamp })
+    });
+    alert('Carrito guardado');
+  });
+
+  document.getElementById('restoreCartBtn').addEventListener('click', async () => {
+    const res = await fetch('/api/get_user_cart');
+    const data = await res.json();
+    localStorage.setItem('cart', JSON.stringify(data));
+    alert('Carrito restaurado');
+  });
+
+  cargarPresupuestos();
 {% extends "layout.html" %}
 
 {% block title %}Presupuestos{% endblock %}

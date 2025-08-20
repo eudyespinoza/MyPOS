@@ -17,6 +17,9 @@ from connectors.d365_interface import (
     run_actualizar_presupuesto_d365,
     run_validar_cliente_existente,
     run_alta_cliente_d365,
+    guardar_numero_presupuesto,
+    obtener_numeros_presupuesto,
+)
     guardar_presupuesto_local,
     obtener_presupuestos_locales,
 )
@@ -25,9 +28,17 @@ from blueprints.pagos import pagos_bp
 from blueprints.clientes import clientes_bp
 from connectors.d365_interface import run_crear_presupuesto_batch, run_obtener_presupuesto_d365, run_actualizar_presupuesto_d365, run_validar_cliente_existente, run_alta_cliente_d365
 from connectors.get_token import get_access_token_d365, get_access_token_d365_qa
-from db.database import obtener_datos_tienda_por_id, obtener_empleados_by_email, actualizar_last_store, obtener_contador_pdf, save_cart, get_cart
+from db.database import (
+    obtener_datos_tienda_por_id,
+    obtener_empleados_by_email,
+    actualizar_last_store,
+    obtener_contador_pdf,
+    save_cart,
+    get_cart,
+)
 from functools import lru_cache
 from services.email_service import enviar_correo_fallo
+from services.search_service import indexar_productos, buscar_productos
 from services.product_index import index_products, search_products
 import os
 import io
@@ -536,6 +547,13 @@ def productos():
     last_store = session.get('last_store', 'BA001GC')
     return render_template('index.html', stores=stores, last_store=last_store)
 
+
+@app.route('/presupuestos')
+@login_required
+def presupuestos_page():
+    """Página para gestionar presupuestos y carritos."""
+    return render_template('presupuestos.html')
+
 @app.route('/config/secuencias')
 @login_required
 def config_secuencias():
@@ -779,6 +797,7 @@ def create_quotation():
             return jsonify({"error": error}), 500
 
         logger.info(f"Presupuesto creado: {quotation_number}")
+        guardar_numero_presupuesto(quotation_number)
         guardar_presupuesto_local(quotation_number)
         return jsonify({"quotation_number": quotation_number}), 201
 
@@ -883,6 +902,7 @@ def update_quotation(quotation_id):
             return jsonify({"error": error}), 500
 
         logger.info(f"Presupuesto {quotation_id} actualizado exitosamente")
+        guardar_numero_presupuesto(quotation_number)
         return jsonify({"quotation_number": quotation_number}), 200
 
     except Exception as e:
@@ -1029,6 +1049,40 @@ def api_productos_by_code():
         return jsonify(products), 200
     except Exception as e:
         logger.error(f"Error en búsqueda de producto por código: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/index_products', methods=['POST'])
+@login_required
+def api_index_products():
+    """Indexa productos en MongoDB para búsquedas rápidas."""
+    try:
+        table = obtener_productos_cache()
+        if table is None:
+            return jsonify({"error": "No se pudo cargar los productos"}), 500
+        import pandas as pd
+        df = table.select(['Número de Producto', 'Nombre del Producto']).to_pandas()
+        productos = (
+            {"sku": row['Número de Producto'], "descripcion": row['Nombre del Producto']}
+            for _, row in df.iterrows()
+        )
+        count = indexar_productos(list(productos))
+        return jsonify({"indexed": count}), 200
+    except Exception as e:
+        logger.error(f"Error al indexar productos: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/search_products_index')
+@login_required
+def api_search_products_index():
+    """Busca productos en el índice de Mongo por SKU o descripción."""
+    term = request.args.get('q', '').strip()
+    try:
+        results = buscar_productos(term)
+        return jsonify(results), 200
+    except Exception as e:
+        logger.error(f"Error al buscar productos en índice: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/save_local_quotation', methods=['POST'])
@@ -1383,6 +1437,16 @@ def get_user_cart():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/quotation_numbers', methods=['GET'])
+@login_required
+def api_quotation_numbers():
+    """Devuelve los números de presupuesto almacenados localmente."""
+    try:
+        numeros = obtener_numeros_presupuesto()
+        return jsonify(numeros), 200
+    except Exception as e:
+        logger.error(f"Error al obtener números de presupuesto: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 @app.route('/api/quotations', methods=['GET'])
 @login_required
 def list_saved_quotations():
