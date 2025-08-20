@@ -1,0 +1,20 @@
+{% extends 'layout_tablet.html' %}
+{% block title %}Factura FC{% endblock %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-12">
+    <h1 class="h3 mb-4">Factura</h1>
+    <form id="fcForm" class="needs-validation" novalidate>
+      <div class="mb-3">
+        <label class="form-label">Cliente</label>
+        <input type="text" class="form-control form-control-lg" placeholder="Nombre del cliente" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Monto</label>
+        <input type="number" class="form-control form-control-lg" placeholder="0.00" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg w-100">Generar Factura</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
