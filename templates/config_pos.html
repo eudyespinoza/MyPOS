@@ -1,0 +1,150 @@
+{% extends "layout.html" %}
+
+{% block title %}Configuración POS{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2 class="text-center mb-4">Configuración de Puntos de Venta</h2>
+    <div class="card shadow-sm mb-4" style="background-color: var(--card-bg);">
+        <div class="card-body">
+            <form id="formConfigPos">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="tiendaId" class="form-label">Tienda ID <span class="text-danger">*</span></label>
+                        <input type="text" id="tiendaId" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="ptoVentaId" class="form-label">Punto de Venta ID <span class="text-danger">*</span></label>
+                        <input type="text" id="ptoVentaId" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="centroCosto" class="form-label">Centro de Costo <span class="text-danger">*</span></label>
+                        <input type="text" id="centroCosto" class="form-control" required>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-end mt-3">
+                    <button type="reset" class="btn btn-outline-secondary rounded-pill me-2">Limpiar</button>
+                    <button type="submit" class="btn btn-primary rounded-pill">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <h4 class="card-title">Configuraciones Registradas</h4>
+            <div class="table-responsive">
+                <table class="table table-striped table-hover" id="tablaConfigPos">
+                    <thead style="background-color: var(--table-header-bg);">
+                        <tr>
+                            <th>Tienda</th>
+                            <th>Pto. Venta</th>
+                            <th>Centro Costo</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function cargarConfigPos() {
+    try {
+        const resp = await fetchWithAuth('/api/config_pos/');
+        const data = await resp.json();
+        const tbody = document.querySelector('#tablaConfigPos tbody');
+        tbody.innerHTML = '';
+        data.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${row.tienda_id}</td>
+                <td>${row.pto_venta_id}</td>
+                <td>${row.centro_costo}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary me-2" onclick="editar(${row.id})">Editar</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="eliminar(${row.id})">Eliminar</button>
+                </td>`;
+            tbody.appendChild(tr);
+        });
+    } catch (err) {
+        console.error(err);
+        showToast('danger', 'Error al cargar configuraciones');
+    }
+}
+
+document.getElementById('formConfigPos').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const payload = {
+        tienda_id: document.getElementById('tiendaId').value.trim(),
+        pto_venta_id: document.getElementById('ptoVentaId').value.trim(),
+        centro_costo: document.getElementById('centroCosto').value.trim()
+    };
+    try {
+        let resp;
+        if (form.dataset.id) {
+            resp = await fetchWithAuth(`/api/config_pos/${form.dataset.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            resp = await fetchWithAuth('/api/config_pos/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        }
+        if (!resp.ok) {
+            const errData = await resp.json();
+            throw new Error(errData.error || 'Error al guardar');
+        }
+        showToast('success', 'Configuración guardada');
+        form.reset();
+        delete form.dataset.id;
+        cargarConfigPos();
+    } catch (err) {
+        console.error(err);
+        showToast('danger', err.message);
+    }
+});
+
+async function editar(id) {
+    try {
+        const resp = await fetchWithAuth('/api/config_pos/');
+        const data = await resp.json();
+        const row = data.find(r => r.id === id);
+        if (!row) return;
+        document.getElementById('tiendaId').value = row.tienda_id;
+        document.getElementById('ptoVentaId').value = row.pto_venta_id;
+        document.getElementById('centroCosto').value = row.centro_costo;
+        document.getElementById('formConfigPos').dataset.id = id;
+    } catch (err) {
+        console.error(err);
+        showToast('danger', 'Error al cargar configuración');
+    }
+}
+
+async function eliminar(id) {
+    if (!confirm('¿Eliminar configuración?')) return;
+    try {
+        const resp = await fetchWithAuth(`/api/config_pos/${id}`, { method: 'DELETE' });
+        if (!resp.ok) {
+            const errData = await resp.json();
+            throw new Error(errData.error || 'Error al eliminar');
+        }
+        showToast('success', 'Configuración eliminada');
+        cargarConfigPos();
+    } catch (err) {
+        console.error(err);
+        showToast('danger', err.message);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', cargarConfigPos);
+</script>
+{% endblock %}

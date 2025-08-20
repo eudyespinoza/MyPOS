@@ -41,7 +41,12 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+# Ruta del archivo de base de datos para configuraciones POS
+DB_PATH = os.path.join(ROOT_DIR, 'pos_config.db')
+
+def load_d365_config():
 DB_FILE = os.path.join(ROOT_DIR, "mypos.db")
+
 
 
 def init_db():
@@ -191,6 +196,97 @@ __all__ = [
         return None
 
 
+# ---------------------------------------------------------------------------
+# Funciones de base de datos para configuración de Puntos de Venta
+# ---------------------------------------------------------------------------
+
+def get_connection():
+    """Devuelve una conexión a la base de datos de configuración."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    """Crea las tablas necesarias si no existen."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS config_pos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tienda_id TEXT NOT NULL,
+            pto_venta_id TEXT NOT NULL,
+            centro_costo TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def add_config_pos(tienda_id: str, pto_venta_id: str, centro_costo: str) -> int:
+    """Inserta una nueva configuración de punto de venta."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO config_pos (tienda_id, pto_venta_id, centro_costo) VALUES (?, ?, ?)",
+        (tienda_id, pto_venta_id, centro_costo),
+    )
+    conn.commit()
+    config_id = cur.lastrowid
+    conn.close()
+    return config_id
+
+
+def get_all_config_pos():
+    """Obtiene todas las configuraciones de puntos de venta."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, tienda_id, pto_venta_id, centro_costo FROM config_pos")
+    rows = [dict(row) for row in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_config_pos_by_ids(tienda_id: str, pto_venta_id: str):
+    """Obtiene una configuración por tienda y punto de venta."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, tienda_id, pto_venta_id, centro_costo FROM config_pos WHERE tienda_id = ? AND pto_venta_id = ?",
+        (tienda_id, pto_venta_id),
+    )
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_config_pos(config_id: int, tienda_id: str, pto_venta_id: str, centro_costo: str) -> bool:
+    """Actualiza una configuración existente."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE config_pos SET tienda_id = ?, pto_venta_id = ?, centro_costo = ? WHERE id = ?",
+        (tienda_id, pto_venta_id, centro_costo, config_id),
+    )
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+def delete_config_pos(config_id: int) -> bool:
+    """Elimina una configuración por su ID."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM config_pos WHERE id = ?", (config_id,))
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
+
+  
 def agregar_surtido_masivo(productos):
     """Inserta o actualiza un listado de productos SAP."""
     conn = sqlite3.connect(DB_FILE)
