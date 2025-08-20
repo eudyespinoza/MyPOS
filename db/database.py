@@ -2,6 +2,7 @@ import requests
 import configparser
 import os
 import logging
+import sqlite3
 
 # Obtén la ruta absoluta a la raíz del proyecto
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -94,3 +95,65 @@ def get_access_token_d365_qa():
     except requests.exceptions.RequestException as e:
         logging.info(f"Consulta token a D365 FALLO. {e}")
         return None
+
+DB_PATH = os.path.join(ROOT_DIR, 'clientes.db')
+
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        '''CREATE TABLE IF NOT EXISTS clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            dni TEXT NOT NULL,
+            cuit TEXT UNIQUE NOT NULL,
+            direccion TEXT
+        )'''
+    )
+    conn.commit()
+    conn.close()
+
+
+def guardar_cliente(datos):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        'INSERT INTO clientes (nombre, dni, cuit, direccion) VALUES (?,?,?,?)',
+        (datos['nombre'], datos['dni'], datos['cuit'], datos.get('direccion'))
+    )
+    conn.commit()
+    conn.close()
+
+
+def actualizar_cliente(cuit, datos):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        'UPDATE clientes SET nombre=?, dni=?, cuit=?, direccion=? WHERE cuit=?',
+        (
+            datos['nombre'],
+            datos['dni'],
+            datos['cuit'],
+            datos.get('direccion'),
+            cuit,
+        )
+    )
+    conn.commit()
+    conn.close()
+
+
+def buscar_cliente_por_cuit(cuit):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT nombre, dni, cuit, direccion FROM clientes WHERE cuit=?', (cuit,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {
+            'nombre': row[0],
+            'dni': row[1],
+            'cuit': row[2],
+            'direccion': row[3]
+        }
+    return None
