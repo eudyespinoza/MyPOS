@@ -202,8 +202,10 @@ function updateCartDisplay() {
                 <td>
                     <input type="number" class="form-control form-control-sm quantity-input" value="${item.quantity}" min="${item.multiplo}" step="${item.multiplo}" data-product-id="${item.productId}">
                 </td>
-                <td>$${formatearMoneda(item.price)}</td>
-                <td>$${formatearMoneda(itemTotal)}</td>
+                <td>
+                    <input type="number" class="form-control form-control-sm price-input" value="${item.price}" min="0" step="0.01" data-product-id="${item.productId}">
+                </td>
+                <td class="line-total">$${formatearMoneda(itemTotal)}</td>
                 <td><button class="btn btn-danger btn-sm" onclick="removeFromCart('${item.productId}')">Eliminar</button></td>
             `;
             cartTable.appendChild(row);
@@ -214,6 +216,17 @@ function updateCartDisplay() {
                 const newQuantity = validarCantidad(item.multiplo, parseFloat(e.target.value));
                 if (newQuantity !== item.quantity) {
                     item.quantity = newQuantity;
+                    updateCartDisplay();
+                    saveCartToIndexedDB();
+                }
+            });
+
+            // Agregar evento para actualizar precio
+            const priceInput = row.querySelector('.price-input');
+            priceInput.addEventListener('change', (e) => {
+                const newPrice = parseFloat(e.target.value);
+                if (!isNaN(newPrice) && newPrice !== item.price) {
+                    item.price = newPrice;
                     updateCartDisplay();
                     saveCartToIndexedDB();
                 }

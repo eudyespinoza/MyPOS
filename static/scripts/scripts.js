@@ -188,8 +188,8 @@ function cargarVistaCards(productos) {
         <div class="spinner-border spinner-border-sm text-primary image-spinner" role="status">
           <span class="visually-hidden">Cargando...</span>
         </div>
-        <img data-src="/static/img/placeholder.jpg" 
-             alt="${product.nombre_producto}" 
+        <img data-src="${product.imagen_url || '/images/default.jpg'}"
+             alt="${product.nombre_producto}"
              class="card-img-top product-image lazyload"
              onclick="event.stopPropagation(); showModal(${product.numero_producto}, 1)">
       </div>
@@ -215,78 +215,19 @@ function cargarVistaCards(productos) {
 
   cardView.appendChild(fragment);
   setupCardListeners();
-  cargarImagenesCards(productos);
+  initLazyLoading();
 }
 
-async function cargarImagenesCards(productos) {
-    for (const product of productos) {
-        const card = document.querySelector(`.card[data-product-id="${product.numero_producto}"]`);
-        if (card) {
-            const imageUrl = await obtenerImagenProducto(product.numero_producto);
-            const img = card.querySelector(".product-image");
-            img.setAttribute("data-src", imageUrl);
-        }
-    }
-    initLazyLoading(); // Activar lazy loading después de actualizar data-src
-}
-
-/***************************************
- * Obtener Imagen del Producto (Usando Caché)
- ***************************************/
+// Obtiene la URL de imagen desde el listado de productos
 async function obtenerImagenProducto(productId) {
-    const defaultImage = "/static/img/default.jpg";
-    const cacheKey = `img_cache_${productId}`;
-    const cachedImage = sessionStorage.getItem(cacheKey);
-
-    if (cachedImage) {
-        return cachedImage;
-    }
-
-    const imageChecks = [1, 2, 3].map(i => ({
-        url: getImageUrl(productId, i),
-        index: i
-    }));
-
-    const results = await Promise.all(
-        imageChecks.map(check =>
-            imageExists(check.url, productId, check.index)
-                .then(exists => ({ url: check.url, exists }))
-        )
-    );
-
-    const firstValidImage = results.find(result => result.exists)?.url;
-    const finalImage = firstValidImage || defaultImage;
-
-    sessionStorage.setItem(cacheKey, finalImage);
-    return finalImage;
+    const product = products.find(p => p.numero_producto === productId);
+    return product && product.imagen_url ? product.imagen_url : '/images/default.jpg';
 }
 
 /***************************************
  * Funciones Utilitarias y de Imagen
  ***************************************/
-function getImageUrl(productId, index) {
-  return `https://productimages.familiabercomat.com/medium/${productId}_000_00${index}.jpg`;
-}
-
-async function imageExists(url, productId, index) {
-  const cacheKey = `img_cache_${productId}_${index}`;
-  const cachedResult = localStorage.getItem(cacheKey);
-  if (cachedResult !== null) {
-    return cachedResult === 'true';
-  }
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      localStorage.setItem(cacheKey, 'true');
-      resolve(true);
-    };
-    img.onerror = () => {
-      localStorage.setItem(cacheKey, 'false');
-      resolve(false);
-    };
-    img.src = url;
-  });
-}
+// Las imágenes se obtienen desde el backend, por lo que no se requiere lógica adicional aquí.
 
 /***************************************
  * Funciones para Modal y Overlay
@@ -298,31 +239,11 @@ async function showModal(productId) {
     const modalImg = document.getElementById('modalImage');
     const modalContent = document.querySelector('.image-modal-content');
 
-    // 🔹 Determinar qué imágenes existen para este producto
-    let availableImages = [];
-    for (let i = 1; i <= 3; i++) {
-        const imageUrl = getImageUrl(productId, i);
-        const cacheKey = `img_cache_${productId}_${i}`;
-        let exists = localStorage.getItem(cacheKey);
+    const imageUrl = await obtenerImagenProducto(productId);
+    const availableImages = [imageUrl];
 
-        if (exists === null) {
-            exists = await imageExists(imageUrl, productId, i);
-        } else {
-            exists = exists === 'true'; // Convertir string a booleano
-        }
-
-        if (exists) {
-            availableImages.push(imageUrl);
-        }
-    }
-
-    // 🔹 Si no hay imágenes disponibles, usar la imagen por defecto
-    if (availableImages.length === 0) {
-        availableImages.push("/static/img/default.jpg");
-    }
-
-    currentModalImageIndex = 0; // Siempre empezamos con la primera imagen disponible
-    modalImg.src = availableImages[currentModalImageIndex];
+    currentModalImageIndex = 0;
+    modalImg.src = imageUrl;
     ajustarImagenModal();
     modal.style.display = 'flex';
 
@@ -332,32 +253,6 @@ async function showModal(productId) {
     // Elimina botones previos para evitar duplicados
     document.getElementById('modalPrevButton')?.remove();
     document.getElementById('modalNextButton')?.remove();
-
-    // 🔹 Crear botón "Anterior"
-    if (availableImages.length > 1) {
-        const prevButton = document.createElement('button');
-        prevButton.id = 'modalPrevButton';
-        prevButton.classList.add('modal-nav-button', 'btn', 'btn-dark');
-        prevButton.innerHTML = '❮';
-        prevButton.onclick = (event) => {
-            event.stopPropagation();
-            navigateModalImage(-1);
-        };
-        modalContent.appendChild(prevButton);
-    }
-
-    // 🔹 Crear botón "Siguiente"
-    if (availableImages.length > 1) {
-        const nextButton = document.createElement('button');
-        nextButton.id = 'modalNextButton';
-        nextButton.classList.add('modal-nav-button', 'btn', 'btn-dark');
-        nextButton.innerHTML = '❯';
-        nextButton.onclick = (event) => {
-            event.stopPropagation();
-            navigateModalImage(1);
-        };
-        modalContent.appendChild(nextButton);
-    }
 }
 
 function closeModal() {
@@ -424,53 +319,21 @@ function ajustarAnchoModal() {
  * Funciones para imágenes de producto
  ***************************************/
 async function generateImageHtml(productId) {
-    const imageUrl = getImageUrl(productId, 1);
-    const exists = await imageExists(imageUrl, productId, 1);
-    if (exists) {
-        return `
+    const imageUrl = await obtenerImagenProducto(productId);
+    return `
             <div class="product-image-container" data-current-index="1">
-                <img 
-                    src="${imageUrl}" 
+                <img
+                    src="${imageUrl}"
                     class="product-image img-thumbnail"
-                    onclick="event.stopPropagation(); showModal(${productId}, parseInt(this.parentElement.dataset.currentIndex))"
+                    onclick="event.stopPropagation(); showModal(${productId}, 1)"
                     alt="Producto ${productId}"
                 >
-                <div class="image-nav-buttons">
-                    <button class="image-nav-button prev-image" 
-                            onclick="event.stopPropagation(); navigateImage(${productId}, this.parentElement.parentElement, -1)" 
-                            disabled>
-                        ←
-                    </button>
-                    <button class="image-nav-button next-image" 
-                            onclick="event.stopPropagation(); navigateImage(${productId}, this.parentElement.parentElement, 1)">
-                        →
-                    </button>
-                </div>
             </div>
         `;
-    }
-    return 'Sin imagen';
 }
 
 async function navigateImage(productId, container, direction) {
-  const currentIndex = parseInt(container.dataset.currentIndex);
-  const newIndex = currentIndex + direction;
-  if (newIndex >= 1 && newIndex <= 3) {
-    const newUrl = getImageUrl(productId, newIndex);
-    const exists = await imageExists(newUrl, productId, newIndex);
-    if (exists) {
-      const img = container.querySelector('.product-image');
-      img.src = newUrl;
-      container.dataset.currentIndex = newIndex;
-      const prevButton = container.querySelector('.prev-image');
-      const nextButton = container.querySelector('.next-image');
-      prevButton.disabled = newIndex === 1;
-      const nextImageExists = newIndex < 3
-        ? await imageExists(getImageUrl(productId, newIndex + 1), productId, newIndex + 1)
-        : false;
-      nextButton.disabled = !nextImageExists;
-    }
-  }
+    // Navegación deshabilitada
 }
 
 /***************************************
@@ -520,9 +383,9 @@ async function displayProducts(products) {
                 <td id="images-${product["numero_producto"]}">
                     <div class="image-container">
                         <div class="spinner-border spinner-border-sm text-primary image-spinner" role="status">
-                            <span class="visually-hidden">Cargando...</span>
+                            <span class="visualmente-hidden">Cargando...</span>
                         </div>
-                        <img data-src="/static/img/placeholder.jpg" class="product-image img-thumbnail lazyload" alt="Cargando...">
+                        <img data-src="${product["imagen_url"] || '/images/default.jpg'}" class="product-image img-thumbnail lazyload" alt="Cargando...">
                     </div>
                 </td>
                 <td>
@@ -542,28 +405,13 @@ async function displayProducts(products) {
         }
         productList.appendChild(fragment);
         setupRowListeners();
-        cargarImagenesTabla(pageProducts);
+        initLazyLoading();
     } else {
         cargarVistaCards(pageProducts);
     }
 
     updatePagination(products.length);
 }
-
-async function cargarImagenesTabla(products) {
-    for (const product of products) {
-        const imageCell = document.getElementById(`images-${product["numero_producto"]}`);
-        if (imageCell) {
-            const imageUrl = await obtenerImagenProducto(product["numero_producto"]);
-            const img = imageCell.querySelector("img");
-            img.setAttribute("data-src", imageUrl);
-            img.setAttribute("onclick", `showModal(${product["numero_producto"]}, 1)`);
-            img.alt = `Producto ${product["numero_producto"]}`;
-        }
-    }
-    initLazyLoading(); // Activar lazy loading después de actualizar data-src
-}
-
 
 // Función para mostrar un mensaje en la interfaz de usuario
 function mostrarMensaje(mensaje) {
@@ -1226,14 +1074,9 @@ async function mostrarAtributos(productId) {
         }))
       : [];
 
-    const imageUrls = await Promise.all([1, 2, 3].map(async i => {
-      const url = getImageUrl(productId, i);
-      const exists = await imageExists(url, productId, i);
-      return exists ? url : null;
-    })).then(results => results.filter(Boolean));
-
-    const defaultImage = "/static/img/default.jpg";
-    const validImages = imageUrls.length > 0 ? imageUrls : [defaultImage];
+    const imageUrl = await obtenerImagenProducto(productId);
+    const defaultImage = '/images/default.jpg';
+    const validImages = imageUrl ? [imageUrl] : [defaultImage];
 
     overlayContent.innerHTML = `
       <button class="overlay-close-btn" onclick="cerrarOverlay()">×</button>
@@ -1518,9 +1361,9 @@ function initLazyLoading() {
                             img.classList.remove("lazyload");
                             observer.unobserve(img);
                         };
-                        img.onerror = () => {
+                            img.onerror = () => {
                             if (spinner) spinner.style.display = "none"; // Ocultar spinner si falla
-                            img.src = "/static/img/default.jpg"; // Imagen por defecto en caso de error
+                            img.src = "/images/default.jpg"; // Imagen por defecto en caso de error
                         };
                         img.removeAttribute("data-src");
                     }

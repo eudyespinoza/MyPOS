@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, session, jsonify, request, send_from_directory, flash
+from flask import Flask, render_template, redirect, url_for, session, jsonify, request, send_from_directory, flash, send_file
 from db.database import init_db, obtener_atributos, obtener_stores_from_parquet, obtener_stock, \
     obtener_grupos_cumplimiento, obtener_empleados, obtener_todos_atributos, guardar_token_d365, obtener_token_d365, \
     obtener_producto_por_id
@@ -14,6 +14,7 @@ from blueprints.secuencia_numerica import secuencia_bp
 from connectors.d365_interface import run_crear_presupuesto_batch, run_obtener_presupuesto_d365, run_actualizar_presupuesto_d365, run_validar_cliente_existente, run_alta_cliente_d365
 from connectors.get_token import get_access_token_d365, get_access_token_d365_qa
 from db.database import obtener_datos_tienda_por_id, obtener_empleados_by_email, actualizar_last_store, obtener_contador_pdf, save_cart, get_cart
+from werkzeug.utils import secure_filename
 from functools import lru_cache
 from services.email_service import enviar_correo_fallo
 import os
@@ -26,6 +27,7 @@ import threading
 from datetime import timedelta, timezone
 import json
 import requests
+import io
 from config import CACHE_FILE_PRODUCTOS, CACHE_FILE_STOCK, CACHE_FILE_CLIENTES, CACHE_FILE_EMPLEADOS, CACHE_FILE_ATRIBUTOS
 
 clientes_lock = threading.Lock()
@@ -634,6 +636,9 @@ def api_productos():
         df['precio_final_con_iva'] = df['precio_final_con_iva'].apply(lambda x: f"{x:,.2f}".replace(".", "X").replace(",", ".").replace("X", ","))
         df['precio_final_con_descuento'] = df['precio_final_con_descuento'].apply(lambda x: f"{x:,.2f}".replace(".", "X").replace(",", ".").replace("X", ","))
         df['total_disponible_venta'] = df['total_disponible_venta'].apply(lambda x: f"{x:,.2f}".replace(".", "X").replace(",", ".").replace("X", ","))
+
+        # Generar URL de imagen protegida para cada producto
+        df['imagen_url'] = df['numero_producto'].apply(lambda x: url_for('serve_image', filename=f"{x}.jpg"))
 
         paginated_products = df[offset:offset + items_per_page].to_dict('records')
         logger.info(f"Se encontraron {len(df)} productos para el store '{store}', paginados {len(paginated_products)}.")
@@ -1347,6 +1352,47 @@ def api_clientes_search():
     except Exception as e:
         logger.error(f"Error en búsqueda de clientes desde Parquet: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+def upload_image_to_azure(file_stream, filename):
+    """Sube un archivo de imagen a Azure Blob Storage."""
+    from azure.storage.blob import BlobServiceClient
+    connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING', '')
+    container_name = os.getenv('AZURE_CONTAINER', 'product-images')
+    service = BlobServiceClient.from_connection_string(connection_string)
+    container = service.get_container_client(container_name)
+    container.upload_blob(name=filename, data=file_stream, overwrite=True)
+    return filename
+
+@app.route('/images/<path:filename>')
+@login_required
+def serve_image(filename):
+    """Recupera una imagen desde Azure Blob Storage y la sirve al cliente."""
+    try:
+        from azure.storage.blob import BlobServiceClient
+        connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING', '')
+        container_name = os.getenv('AZURE_CONTAINER', 'product-images')
+        service = BlobServiceClient.from_connection_string(connection_string)
+        blob_client = service.get_blob_client(container=container_name, blob=filename)
+        stream = io.BytesIO()
+        download_stream = blob_client.download_blob()
+        download_stream.readinto(stream)
+        stream.seek(0)
+        content_type = download_stream.properties.content_settings.content_type
+        return send_file(stream, mimetype=content_type)
+    except Exception as e:
+        logger.error(f"Error al servir imagen {filename}: {e}", exc_info=True)
+        return send_file(io.BytesIO(), mimetype='application/octet-stream'), 404
+
+@app.route('/upload_image', methods=['POST'])
+@login_required
+def upload_image():
+    """Endpoint para subir una imagen a Azure Blob Storage."""
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'error': 'No file provided'}), 400
+    filename = secure_filename(file.filename)
+    upload_image_to_azure(file.stream, filename)
+    return jsonify({'filename': filename, 'url': url_for('serve_image', filename=filename)}), 201
 
 @app.route('/static/<path:filename>')
 @login_required
