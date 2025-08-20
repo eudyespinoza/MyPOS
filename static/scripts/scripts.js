@@ -4854,3 +4854,28 @@ document.addEventListener('DOMContentLoaded', () => {
     updateFacturarButton(); // Inicializar estado del botón
     setInterval(updateFacturarButton, 1000); // Verificar cada segundo
 });
+
+function registerMixedPayment() {
+    const data = {
+        operacion_id: document.getElementById('operacionId')?.value || null,
+        efectivo: document.getElementById('cashCheck')?.checked ? parseFloat(document.getElementById('cashAmount').value || 0) : 0,
+        transferencia: document.getElementById('transferCheck')?.checked ? parseFloat(document.getElementById('transferAmount').value || 0) : 0,
+        tarjeta: document.getElementById('cardCheck')?.checked ? parseFloat(document.getElementById('cardAmount').value || 0) : 0,
+        referencia: document.getElementById('transferRef')?.value || ''
+    };
+    fetchWithAuth('/pagos/registrar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(resp => {
+        if (resp.status === 'ok') {
+            showToast('success', 'Pago registrado');
+        } else {
+            showToast('danger', resp.error || 'Error al registrar pago');
+        }
+    })
+    .catch(() => showToast('danger', 'Error de red al registrar pago'));
+}
+window.registerMixedPayment = registerMixedPayment;
