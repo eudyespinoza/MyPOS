@@ -4,6 +4,9 @@ import pyodbc
 import logging
 import asyncio
 import configparser
+import queue
+import threading
+from contextlib import contextmanager
 from db.database import agregar_atributos_masivo, agregar_stock_masivo, \
     agregar_grupos_cumplimiento_masivo, agregar_empleados_masivo, agregar_datos_tienda_masivo
 import requests
@@ -15,6 +18,9 @@ CONFIG_PATH = os.path.join(os.path.dirname(ROOT_DIR), 'config.ini')  # Config.in
 # Cargar la configuración
 config = configparser.ConfigParser()
 config.read(CONFIG_PATH)
+
+_pool_lock = threading.Lock()
+_connection_pool = queue.Queue(maxsize=10)
 
 def load_db_config():
     """
@@ -39,50 +45,50 @@ def load_db_config():
         "password_fabric": config['database'].get('password_fabric', ''),
     }
 
-def conectar_fabric_db():
-    """
-    Establishes a connection to the Fabric database using specified
-    authentication methods. The function utilizes multiple authentication
-    methods sequentially until a successful connection is made or all
-    methods fail. Log statements provide detailed information about
-    connection attempts and failures.
-
-    :raises pyodbc.Error: If the connection attempt fails for any of the
-        authentication methods.
-    :rtype: pyodbc.Connection or None
-    :return: A valid database connection object if successful;
-        otherwise, None if all authentication methods fail.
-    """
+def _create_connection():
     db_config = load_db_config()
     server = db_config["server_fabric"]
     database = db_config["database_fabric"]
     username = db_config["username_fabric"]
     password = db_config["password_fabric"]
+    conn_str = (
+        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"SERVER={server};"
+        f"DATABASE={database};"
+        f"UID={username};"
+        f"PWD={password};"
+        "Authentication=ActiveDirectoryPassword;"
+    )
+    return pyodbc.connect(conn_str)
 
-    autenticaciones = [
-        {
-            "method": "aad_password",
-            "conn_str": (
-                f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-                f"SERVER={server};"
-                f"DATABASE={database};"
-                f"UID={username};"
-                f"PWD={password};"
-                "Authentication=ActiveDirectoryPassword;"
-            )
-        }
-    ]
 
-    for auth in autenticaciones:
+def _get_connection():
+    with _pool_lock:
+        if not _connection_pool.empty():
+            return _connection_pool.get()
+    return _create_connection()
+
+
+def _release_connection(conn):
+    with _pool_lock:
         try:
-            conexion = pyodbc.connect(auth["conn_str"])
-            logging.info(f"Conexión exitosa usando el método de autenticación: {auth['method']}")
-            return conexion
-        except pyodbc.Error as e:
-            logging.warning(f"Intento de conexión fallido con el método: {auth['method']}. Error: {e}")
+            _connection_pool.put(conn, block=False)
+            return
+        except queue.Full:
+            pass
+    conn.close()
 
-    logging.error("No se pudo establecer conexión con ninguno de los métodos de autenticación.")
-    return None
+
+@contextmanager
+def conectar_fabric_db():
+    try:
+        conn = _get_connection()
+        yield conn
+    except pyodbc.Error as e:
+        logging.error(f"Error al conectar con Fabric: {e}")
+        raise
+    finally:
+        _release_connection(conn)
 
 def obtener_parquet_productos():
     url = 'https://fabricstorageeastus.blob.core.windows.net/fabric/Respondio/Productos_Buscador?sp=re&st=2025-03-31T17:42:39Z&se=2025-04-01T01:42:39Z&spr=https&sv=2024-11-04&sr=b&sig=Eewxv5qqA76g%2BSBvmoHQQJaYfuTLSW7KlMmSJsd0xVU%3D'
@@ -94,31 +100,21 @@ def obtener_atributos_fabric():
     Obtains attributes from the Fabric database and inserts them into another system in bulk.
     """
     query = "SELECT * FROM Atributos;"
-    conexion_fabric = conectar_fabric_db()
-    if not conexion_fabric:
-        logging.error("No se pudo conectar a la base de datos de Fabric.")
-        return 0
-
-    cursor_fabric = conexion_fabric.cursor()
-
     try:
-        cursor_fabric.execute(query)
-        atributos = cursor_fabric.fetchall()
+        with conectar_fabric_db() as conexion_fabric:
+            cursor_fabric = conexion_fabric.cursor()
+            cursor_fabric.execute(query)
+            atributos = cursor_fabric.fetchall()
 
-        if not atributos:
-            logging.info("No se encontraron atributos en Fabric.")
-            return 0
+            if not atributos:
+                logging.info("No se encontraron atributos en Fabric.")
+                return 0
 
-        total_insertados = agregar_atributos_masivo(atributos)
-        return total_insertados
-
+            total_insertados = agregar_atributos_masivo(atributos)
+            return total_insertados
     except Exception as e:
         logging.error(f"Error al obtener atributos de Fabric: {e}")
         return 0
-
-    finally:
-        conexion_fabric.close()
-        logging.info("Conexión con Fabric cerrada.")
 
 def obtener_stock_fabric():
     """
@@ -129,23 +125,18 @@ def obtener_stock_fabric():
     FROM DataStagingWarehouse.dbo.Stock_Buscador
     """
 
-    conexion_fabric = conectar_fabric_db()
-    if not conexion_fabric:
-        logging.error("No se pudo conectar a la base de datos de Fabric.")
-        return 0
-
     try:
-        cursor = conexion_fabric.cursor()
-        cursor.execute(query)
-        stock_data = cursor.fetchall()
+        with conectar_fabric_db() as conexion_fabric:
+            cursor = conexion_fabric.cursor()
+            cursor.execute(query)
+            stock_data = cursor.fetchall()
 
-        if not stock_data:
-            logging.info("No se encontraron datos de stock en Fabric.")
-            return 0
+            if not stock_data:
+                logging.info("No se encontraron datos de stock en Fabric.")
+                return 0
 
-        total_insertados = agregar_stock_masivo(stock_data)
-        return total_insertados
-
+            total_insertados = agregar_stock_masivo(stock_data)
+            return total_insertados
     except Exception as e:
         logging.error(f"Error al obtener stock de Fabric: {e}")
         return 0
@@ -257,30 +248,21 @@ def obtener_grupos_cumplimiento_fabric():
     FROM DataStagingWarehouse.dbo.Grupos_Cumplimiento_Buscador
     """
 
-    conexion_fabric = conectar_fabric_db()
-    if not conexion_fabric:
-        logging.error("No se pudo conectar a la base de datos de Fabric.")
-        return 0
-
     try:
-        cursor = conexion_fabric.cursor()
-        cursor.execute(query)
-        grupos_data = cursor.fetchall()
+        with conectar_fabric_db() as conexion_fabric:
+            cursor = conexion_fabric.cursor()
+            cursor.execute(query)
+            grupos_data = cursor.fetchall()
 
-        if not grupos_data:
-            logging.info("No se encontraron datos de grupos de cumplimiento en Fabric.")
-            return 0
+            if not grupos_data:
+                logging.info("No se encontraron datos de grupos de cumplimiento en Fabric.")
+                return 0
 
-        total_insertados = agregar_grupos_cumplimiento_masivo(grupos_data)
-        return total_insertados
-
+            total_insertados = agregar_grupos_cumplimiento_masivo(grupos_data)
+            return total_insertados
     except Exception as e:
         logging.error(f"Error al obtener grupos de cumplimiento de Fabric: {e}")
         return 0
-
-    finally:
-        conexion_fabric.close()
-        logging.info("Conexión con Fabric cerrada.")
 
 def obtener_empleados_fabric():
     """
@@ -298,31 +280,21 @@ def obtener_empleados_fabric():
         END as Numero_SAP
     FROM [Entidades_Dynamics_365_Prod].[dbo].[Employees] Empleados
     """)
-    conexion_fabric = conectar_fabric_db()
-    if not conexion_fabric:
-        logging.error("No se pudo conectar a la base de datos de Fabric.")
-        return 0
-
-    cursor_fabric = conexion_fabric.cursor()
-
     try:
-        cursor_fabric.execute(query)
-        empleados = cursor_fabric.fetchall()
+        with conectar_fabric_db() as conexion_fabric:
+            cursor_fabric = conexion_fabric.cursor()
+            cursor_fabric.execute(query)
+            empleados = cursor_fabric.fetchall()
 
-        if not empleados:
-            logging.info("No se encontraron empleados en Fabric.")
-            return 0
+            if not empleados:
+                logging.info("No se encontraron empleados en Fabric.")
+                return 0
 
-        total_insertados = agregar_empleados_masivo(empleados)
-        return total_insertados
-
+            total_insertados = agregar_empleados_masivo(empleados)
+            return total_insertados
     except Exception as e:
         logging.error(f"Error al obtener empleados de Fabric: {e}")
         return 0
-
-    finally:
-        conexion_fabric.close()
-        logging.info("Conexión con Fabric cerrada.")
 
 def obtener_datos_tiendas():
     """
@@ -351,38 +323,28 @@ def obtener_datos_tiendas():
     AND IND2.inventsiteid IS NOT NULL;
     """
 
-    conexion_fabric = conectar_fabric_db()
-    if not conexion_fabric:
-        logging.error("No se pudo conectar a la base de datos de Fabric.")
-        raise ConnectionError("Error de conexión: No se pudo conectar a Fabric DB.")
-
     try:
-        cursor_fabric = conexion_fabric.cursor()
-        logging.info("Ejecutando consulta SQL en Fabric...")
-        cursor_fabric.execute(query)
-        logging.info("Consulta ejecutada con éxito.")
+        with conectar_fabric_db() as conexion_fabric:
+            cursor_fabric = conexion_fabric.cursor()
+            logging.info("Ejecutando consulta SQL en Fabric...")
+            cursor_fabric.execute(query)
+            logging.info("Consulta ejecutada con éxito.")
 
-        logging.info("Recuperando los datos de tiendas con fetchall()...")
-        productos = cursor_fabric.fetchall()
-        logging.info(f"Número de registros recuperados: {len(productos)}")
+            logging.info("Recuperando los datos de tiendas con fetchall()...")
+            productos = cursor_fabric.fetchall()
+            logging.info(f"Número de registros recuperados: {len(productos)}")
 
-        if not productos:
-            logging.info("No se encontraron datos en Fabric.")
-            return 0
+            if not productos:
+                logging.info("No se encontraron datos en Fabric.")
+                return 0
 
-        total_insertados = agregar_datos_tienda_masivo(productos)
-        logging.info(f"Total de datos de tiendas insertados: {total_insertados}")
+            total_insertados = agregar_datos_tienda_masivo(productos)
+            logging.info(f"Total de datos de tiendas insertados: {total_insertados}")
 
-        return total_insertados
-
+            return total_insertados
     except Exception as e:
         logging.error(f"Error al obtener datos de tienda de Fabric: {e}\n{traceback.format_exc()}")
         return 0
-
-    finally:
-        if conexion_fabric:
-            conexion_fabric.close()
-            logging.info("Conexión con Fabric cerrada.")
 
 async def obtener_datos_codigo_postal(codigo_postal):
     """Consulta Fabric para obtener datos de dirección basados en el código postal."""
@@ -408,36 +370,30 @@ async def obtener_datos_codigo_postal(codigo_postal):
         AND AD.[value.ZipCode] = ?
     """
 
-    conexion_fabric = conectar_fabric_db()
-    if not conexion_fabric:
-        logging.error("No se pudo conectar a Fabric.")
-        return None, "Error de conexión a Fabric"
-
     try:
-        cursor = conexion_fabric.cursor()
-        cursor.execute(query, (codigo_postal,))
-        resultados = cursor.fetchall()
-        if not resultados:
-            logging.info(f"No se encontraron datos para el código postal {codigo_postal}")
-            return [], None
-        datos = [
-            {
-                "AddressZipCode": row.AddressZipCode,
-                "AddressCountryRegionId": row.AddressCountryRegionId,
-                "AddressState": row.AddressState,
-                "AddressCounty": row.AddressCounty,
-                "AddressCity": row.AddressCity,
-                "CountyName": row.CountyName
-            } for row in resultados
-        ]
-        logging.info(f"Datos encontrados para código postal {codigo_postal}: {len(datos)} registros")
-        return datos, None
+        with conectar_fabric_db() as conexion_fabric:
+            cursor = conexion_fabric.cursor()
+            cursor.execute(query, (codigo_postal,))
+            resultados = cursor.fetchall()
+            if not resultados:
+                logging.info(f"No se encontraron datos para el código postal {codigo_postal}")
+                return [], None
+            datos = [
+                {
+                    "AddressZipCode": row.AddressZipCode,
+                    "AddressCountryRegionId": row.AddressCountryRegionId,
+                    "AddressState": row.AddressState,
+                    "AddressCounty": row.AddressCounty,
+                    "AddressCity": row.AddressCity,
+                    "CountyName": row.CountyName
+                } for row in resultados
+            ]
+            logging.info(f"Datos encontrados para código postal {codigo_postal}: {len(datos)} registros")
+            return datos, None
     except Exception as e:
         error = f"Error al consultar código postal en Fabric: {str(e)}"
         logging.error(error)
         return None, error
-    finally:
-        conexion_fabric.close()
 
 def run_obtener_datos_codigo_postal(codigo_postal):
     return asyncio.run(obtener_datos_codigo_postal(codigo_postal))

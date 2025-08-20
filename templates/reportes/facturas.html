@@ -1,0 +1,34 @@
+{% extends 'layout.html' %}
+{% block title %}Reporte de Facturas{% endblock %}
+{% block content %}
+<h1>Facturas Emitidas</h1>
+<form method="get" class="row g-3 mb-3">
+  <div class="col-md-4">
+    <input type="date" name="start_date" value="{{ start_date }}" class="form-control" required>
+  </div>
+  <div class="col-md-4">
+    <input type="date" name="end_date" value="{{ end_date }}" class="form-control" required>
+  </div>
+  <div class="col-md-4">
+    <button type="submit" class="btn btn-primary">Filtrar</button>
+  </div>
+</form>
+{% if data %}
+<table class="table table-striped">
+  <thead>
+    <tr>
+      <th>Fecha</th><th>Número</th><th>Vendedor</th><th>Monto</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in data %}
+    <tr>
+      <td>{{ f.fecha }}</td><td>{{ f.numero }}</td><td>{{ f.vendedor }}</td><td>{{ f.monto }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<a class="btn btn-outline-secondary" href="{{ url_for('caja.reportes_facturas_pdf', start_date=start_date, end_date=end_date) }}">Descargar PDF</a>
+<a class="btn btn-outline-secondary" href="{{ url_for('caja.reportes_facturas_excel', start_date=start_date, end_date=end_date) }}">Descargar Excel</a>
+{% endif %}
+{% endblock %}
