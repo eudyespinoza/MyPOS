@@ -145,7 +145,7 @@
 <div id="imageModal" class="image-modal">
   <div class="image-modal-content">
     <button class="close-modal" onclick="closeModal()">×</button>
-    <img id="modalImage" data-src="" alt="Producto">
+    <img id="modalImage" src="{{ url_for('serve_image', filename='default.jpg') }}" alt="Producto">
   </div>
 </div>
 

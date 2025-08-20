@@ -4080,3 +4080,20 @@ button.whatsapp-btn#whatsappBtn.fa-brands.fa-whatsapp:not(:visible)::after {
 .theme-sim main.container-fluid{
   padding-top: 1.25rem;
 }
+/* Ajustes para layout de tablet */
+.tablet-layout .btn {
+  padding: 1rem;
+  font-size: 1.25rem;
+}
+
+.tablet-layout input,
+.tablet-layout select,
+.tablet-layout textarea {
+  font-size: 1.1rem;
+}
+
+@media (max-width: 768px) {
+  .tablet-layout main {
+    padding: 1rem;
+  }
+}

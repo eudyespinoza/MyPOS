@@ -1,0 +1,32 @@
+{% extends "layout.html" %}
+
+{% block title %}Checkout{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Resumen de compra</h2>
+
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Producto</th>
+            <th>Cantidad</th>
+            <th>Modalidad de entrega</th>
+            <th>Costo de flete</th>
+            <th>Entrega estimada</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in cart.items %}
+        <tr>
+            <td>{{ item.productName }}</td>
+            <td>{{ item.quantity }}</td>
+            <td>{{ item.modalidad_entrega or 'N/A' }}</td>
+            <td>{{ item.costo_flete or 0 }}</td>
+            <td>{{ item.fecha_estimada_entrega or 'N/A' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% endblock %}
+

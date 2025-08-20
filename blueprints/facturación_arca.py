@@ -637,3 +637,17 @@ def solicitar_caea():
     except Exception as e:
         logger.error(f"Error al solicitar CAEA: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+
+@facturacion_arca_bp.route('/fc', methods=['GET'])
+@login_required
+def factura_fc():
+    """Pantalla de emisión de Factura C."""
+    return render_template('facturacion_arca/factura_fc.html')
+
+
+@facturacion_arca_bp.route('/nc', methods=['GET'])
+@login_required
+def factura_nc():
+    """Pantalla de emisión de Nota de Crédito."""
+    return render_template('facturacion_arca/factura_nc.html')
