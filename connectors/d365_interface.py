@@ -29,6 +29,36 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+# Archivo local para persistir números de presupuesto
+PRESUPUESTOS_FILE = os.path.join(LOG_DIR, "presupuestos.json")
+
+
+def guardar_numero_presupuesto(numero):
+    """Guarda un número de presupuesto en un archivo JSON."""
+    try:
+        data = []
+        if os.path.exists(PRESUPUESTOS_FILE):
+            with open(PRESUPUESTOS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        data.append({"numero": numero, "timestamp": datetime.utcnow().isoformat()})
+        with open(PRESUPUESTOS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logging.info(f"Número de presupuesto {numero} guardado correctamente")
+    except Exception as e:
+        logging.error(f"Error al guardar número de presupuesto {numero}: {e}")
+
+
+def obtener_numeros_presupuesto():
+    """Devuelve la lista de números de presupuesto guardados."""
+    try:
+        if not os.path.exists(PRESUPUESTOS_FILE):
+            return []
+        with open(PRESUPUESTOS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logging.error(f"Error al obtener números de presupuesto: {e}")
+        return []
+
 def load_d365_config():
     if 'd365' not in config:
         raise KeyError("La sección 'd365' no se encuentra en config.ini")
