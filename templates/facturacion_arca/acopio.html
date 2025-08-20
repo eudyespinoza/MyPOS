@@ -1,0 +1,45 @@
+{% extends "layout.html" %}
+{% block title %}Registro de Acopio{% endblock %}
+{% block content %}
+<div class="container mt-4">
+    <h2>Registro de Acopio</h2>
+    <form id="acopioForm">
+        <div class="mb-3">
+            <label for="vendedor" class="form-label">Vendedor</label>
+            <input type="text" class="form-control" id="vendedor" required>
+        </div>
+        <div class="mb-3">
+            <label for="cajero" class="form-label">Cajero</label>
+            <input type="text" class="form-control" id="cajero" required>
+        </div>
+        <button type="submit" class="btn btn-secondary">Guardar</button>
+    </form>
+    <div id="acopioResult" class="mt-3 alert d-none"></div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+document.getElementById('acopioForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const payload = {
+        vendedor: document.getElementById('vendedor').value,
+        cajero: document.getElementById('cajero').value
+    };
+    const res = await fetchWithAuth('/modulo_facturacion_arca/acopio', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    const div = document.getElementById('acopioResult');
+    div.classList.remove('d-none','alert-success','alert-danger');
+    if (data.message){
+        div.classList.add('alert-success');
+        div.textContent = data.message;
+    } else {
+        div.classList.add('alert-danger');
+        div.textContent = data.error || 'Error';
+    }
+});
+</script>
+{% endblock %}
