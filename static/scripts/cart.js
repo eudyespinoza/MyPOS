@@ -270,6 +270,7 @@ function updateCartDisplay() {
         });
     }
 
+    cart.total = total;
     cartTotal.textContent = `$${formatearMoneda(total)}`;
     if (cart.client) {
         clientInfo.innerHTML = `
@@ -685,6 +686,19 @@ function loadQuotation(quotationId, type) {
             console.error('Error al cargar presupuesto:', error);
             showToast('danger', 'Error al cargar el presupuesto: ' + error.message);
         });
+}
+
+/***************************************
+ * Simulador de pagos
+ ***************************************/
+function openPaymentSimulator() {
+    try {
+        const total = cart.total || 0;
+        const url = `/pagos/simulador?total_carrito=${encodeURIComponent(total.toFixed(2))}`;
+        window.open(url, '_blank');
+    } catch (error) {
+        console.error('Error al abrir el simulador de pagos:', error);
+    }
 }
 
 /***************************************

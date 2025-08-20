@@ -1,0 +1,32 @@
+{% extends 'layout.html' %}
+{% block title %}Simulador de Pagos{% endblock %}
+{% block content %}
+<div class="container py-4">
+  <h2 class="mb-4">Simulador de Pagos</h2>
+  <form method="post" class="row g-3">
+    <div class="col-md-6">
+      <label for="monto" class="form-label">Monto</label>
+      <input type="number" step="0.01" class="form-control" id="monto" name="monto" value="{{ total_carrito }}">
+    </div>
+    <div class="col-md-6">
+      <label for="regla" class="form-label">Regla</label>
+      <select id="regla" name="regla" class="form-select">
+        {% for id, regla in reglas.items() %}
+          <option value="{{ id }}">{{ regla.descripcion }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary">Calcular</button>
+    </div>
+  </form>
+  {% if resultado %}
+  <div class="mt-4">
+    <h4>Resultado</h4>
+    <p><strong>Total:</strong> ${{ '{:.2f}'.format(resultado.total) }}</p>
+    <p><strong>Cuotas:</strong> {{ resultado.cuotas }}</p>
+    <p><strong>Valor por cuota:</strong> ${{ '{:.2f}'.format(resultado.cuota) }}</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
