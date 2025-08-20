@@ -158,13 +158,12 @@ function addToCartConfirmed() {
             multiplo: currentProductToAdd.multiplo,
             unidadMedida: currentProductToAdd.unidadMedida,
             iva: currentProductToAdd.iva,
-            available: true // Asumimos disponible inicialmente
             available: true, // Asumimos disponible inicialmente
             modalidad_entrega: null,
             lat: null,
             lng: null,
             costo_flete: 0,
-            id_linea: null
+            id_linea: null,
             discount: 0,
             surcharge: 0
         });
