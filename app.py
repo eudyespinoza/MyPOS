@@ -1,7 +1,7 @@
 from flask import Flask, render_template, redirect, url_for, session, jsonify, request, send_from_directory, flash
 from db.database import init_db, obtener_atributos, obtener_stores_from_parquet, obtener_stock, \
     obtener_grupos_cumplimiento, obtener_empleados, obtener_todos_atributos, guardar_token_d365, obtener_token_d365, \
-    obtener_producto_por_id
+    obtener_producto_por_id, buscar_productos_sap, obtener_producto_sap
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
@@ -968,6 +968,33 @@ def api_productos_by_code():
         return jsonify(products), 200
     except Exception as e:
         logger.error(f"Error en búsqueda de producto por código: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/sap/productos/search')
+@login_required
+def api_sap_productos_search():
+    """Endpoint para buscar productos almacenados desde SAP."""
+    try:
+        query = request.args.get('query', '').strip()
+        productos = buscar_productos_sap(query) if query else []
+        return jsonify(productos), 200
+    except Exception as e:
+        logger.error(f"Error en búsqueda de productos SAP: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/sap/productos/<codigo>')
+@login_required
+def api_sap_producto_by_code(codigo):
+    """Obtiene un producto específico desde la base SAP persistida."""
+    try:
+        producto = obtener_producto_sap(codigo)
+        if producto:
+            return jsonify(producto), 200
+        return jsonify({"error": "Producto no encontrado"}), 404
+    except Exception as e:
+        logger.error(f"Error obteniendo producto SAP por código: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/save_local_quotation', methods=['POST'])

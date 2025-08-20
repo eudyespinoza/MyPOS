@@ -5,7 +5,9 @@ import logging
 import asyncio
 import configparser
 from db.database import agregar_atributos_masivo, agregar_stock_masivo, \
-    agregar_grupos_cumplimiento_masivo, agregar_empleados_masivo, agregar_datos_tienda_masivo
+    agregar_grupos_cumplimiento_masivo, agregar_empleados_masivo, agregar_datos_tienda_masivo, \
+    agregar_surtido_masivo
+from connectors.sap_productos import obtener_productos_sap
 import requests
 
 # Obtén la ruta absoluta a la raíz del proyecto
@@ -88,6 +90,20 @@ def obtener_parquet_productos():
     url = 'https://fabricstorageeastus.blob.core.windows.net/fabric/Respondio/Productos_Buscador?sp=re&st=2025-03-31T17:42:39Z&se=2025-04-01T01:42:39Z&spr=https&sv=2024-11-04&sr=b&sig=Eewxv5qqA76g%2BSBvmoHQQJaYfuTLSW7KlMmSJsd0xVU%3D'
     parquet_productos = requests.get(url)
     return parquet_productos
+
+
+def obtener_surtido_sap():
+    """Obtiene el surtido de SAP y lo almacena en la base local."""
+    try:
+        productos = obtener_productos_sap()
+        if not productos:
+            logging.info("No se encontraron productos de SAP para insertar.")
+            return 0
+        total_insertados = agregar_surtido_masivo(productos)
+        return total_insertados
+    except Exception as e:
+        logging.error(f"Error al obtener surtido SAP: {e}")
+        return 0
 
 def obtener_atributos_fabric():
     """

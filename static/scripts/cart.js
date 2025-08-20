@@ -63,10 +63,12 @@ function showQuantityModal(event, productId, productName, price) {
         precio_final_con_descuento: price,
         precio_final_con_iva: price, // Valor por defecto si no se encuentra el producto
         multiplo: 1,
-        unidad_medida: "Un"
+        unidad_medida: "Un",
+        iva: 0
     };
     const multiplo = product ? Number(product.multiplo.toFixed(2)) : 1;
     const unidadMedida = product ? product.unidad_medida : "Un";
+    const iva = product ? product.iva || 0 : 0;
     const precioLista = convertirMonedaANumero(product.precio_final_con_iva);
     currentProductToAdd = {
         productId,
@@ -74,6 +76,7 @@ function showQuantityModal(event, productId, productName, price) {
         price: parsedPrice,
         multiplo,
         unidadMedida,
+        iva,
         precioLista // Nuevo campo para precio sin descuento
     };
     document.getElementById("quantityModalProductName").textContent = productName;
@@ -154,6 +157,7 @@ function addToCartConfirmed() {
             quantity: quantity,
             multiplo: currentProductToAdd.multiplo,
             unidadMedida: currentProductToAdd.unidadMedida,
+            iva: currentProductToAdd.iva,
             available: true // Asumimos disponible inicialmente
         });
     }
@@ -190,7 +194,7 @@ function updateCartDisplay() {
     let total = 0;
 
     if (cart.items.length === 0) {
-        cartTable.innerHTML = '<tr><td colspan="5" class="text-center text-muted">El carrito está vacío</td></tr>';
+        cartTable.innerHTML = '<tr><td colspan="8" class="text-center text-muted">El carrito está vacío</td></tr>';
     } else {
         cart.items.forEach(item => {
             const itemTotal = item.price * item.quantity;
@@ -199,6 +203,8 @@ function updateCartDisplay() {
             row.innerHTML = `
                 <td>${item.productId}</td>
                 <td>${item.productName}</td>
+                <td>${item.unidadMedida}</td>
+                <td>${item.iva || 0}%</td>
                 <td>
                     <input type="number" class="form-control form-control-sm quantity-input" value="${item.quantity}" min="${item.multiplo}" step="${item.multiplo}" data-product-id="${item.productId}">
                 </td>
@@ -358,6 +364,41 @@ function openClientSearchModal() {
                 .catch(error => {
                     console.error('Error al buscar clientes:', error);
                     showToast('danger', 'Error al buscar clientes');
+                });
+        }
+    });
+}
+
+function openProductSearchModal() {
+    const modal = new bootstrap.Modal(document.getElementById('productSearchModal'));
+    modal.show();
+    const searchInput = document.getElementById('productSearchInput');
+    const productList = document.getElementById('productList');
+    searchInput.value = '';
+    productList.innerHTML = '';
+
+    searchInput.addEventListener('input', () => {
+        const query = searchInput.value.trim();
+        if (query.length >= 3) {
+            fetch(`/api/sap/productos/search?query=${encodeURIComponent(query)}`)
+                .then(response => response.json())
+                .then(products => {
+                    productList.innerHTML = '';
+                    products.forEach(prod => {
+                        const item = document.createElement('a');
+                        item.href = '#';
+                        item.className = 'list-group-item list-group-item-action';
+                        item.innerHTML = `${prod.codigo} - ${prod.surtido}`;
+                        item.addEventListener('click', () => {
+                            showQuantityModal(new Event('click'), prod.codigo, prod.surtido, 0);
+                            modal.hide();
+                        });
+                        productList.appendChild(item);
+                    });
+                })
+                .catch(error => {
+                    console.error('Error al buscar productos SAP:', error);
+                    showToast('danger', 'Error al buscar productos');
                 });
         }
     });
@@ -626,6 +667,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const clientSearchButton = document.getElementById('clientSearchButton');
     if (clientSearchButton) {
         clientSearchButton.addEventListener('click', openClientSearchModal);
+    }
+
+    const productSearchButton = document.getElementById('productSearchButton');
+    if (productSearchButton) {
+        productSearchButton.addEventListener('click', openProductSearchModal);
     }
 
     // Botón para recuperar presupuesto
