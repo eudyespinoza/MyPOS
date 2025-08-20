@@ -6,7 +6,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from db.fabric import obtener_atributos_fabric, obtener_stock_fabric, obtener_grupos_cumplimiento_fabric, \
-    obtener_empleados_fabric, obtener_datos_tiendas, run_obtener_datos_codigo_postal
+    obtener_empleados_fabric, obtener_datos_tiendas, run_obtener_datos_codigo_postal, \
+    obtener_stock_categoria, obtener_lista_precios_sucursal
 from auth import auth_bp, login_required, logout
 from blueprints.autenticacion_avanzada import autenticacion_avanzada_bp
 from blueprints.facturacion_arca import facturacion_arca_bp
@@ -609,6 +610,35 @@ def api_stock_codigo_store(codigo, store):
     except Exception as e:
         logger.error(f"Error en búsqueda de stock desde Parquet: {e}", exc_info=True)
         return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+
+@app.route('/api/stock_categoria/<categoria_id>')
+def api_stock_categoria(categoria_id):
+    """Endpoint que retorna el stock de una categoría."""
+    try:
+        datos = obtener_stock_categoria(categoria_id)
+        return jsonify(datos)
+    except Exception as e:
+        logger.error(f"Error al obtener stock por categoría: {e}", exc_info=True)
+        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+
+@app.route('/api/lista_precios/<sucursal_id>')
+def api_lista_precios_sucursal(sucursal_id):
+    """Endpoint que retorna la lista de precios de una sucursal."""
+    try:
+        precios = obtener_lista_precios_sucursal(sucursal_id)
+        return jsonify(precios)
+    except Exception as e:
+        logger.error(f"Error al obtener lista de precios: {e}", exc_info=True)
+        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+
+
+@app.route('/stock/<sucursal_id>')
+def stock_view(sucursal_id):
+    """Renderiza la página de stock con las listas de precios por sucursal."""
+    precios = obtener_lista_precios_sucursal(sucursal_id)
+    return render_template('stock.html', precios=precios, sucursal_id=sucursal_id)
 
 @app.route('/api/update_last_store', methods=['POST'])
 @login_required
