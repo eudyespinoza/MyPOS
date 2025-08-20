@@ -211,6 +211,10 @@ function updateCartDisplay() {
                 <td>
                     <input type="number" class="form-control form-control-sm quantity-input" value="${item.quantity}" min="${item.multiplo}" step="${item.multiplo}" data-product-id="${item.productId}">
                 </td>
+                <td>
+                    <input type="number" class="form-control form-control-sm price-input" value="${item.price}" min="0" step="0.01" data-product-id="${item.productId}">
+                </td>
+                <td class="line-total">$${formatearMoneda(itemTotal)}</td>
                 <td>$${formatearMoneda(item.price)}</td>
                 <td><input type="number" class="form-control form-control-sm discount-input" value="${item.discount}" min="0" step="0.01" data-product-id="${item.productId}"></td>
                 <td><input type="number" class="form-control form-control-sm surcharge-input" value="${item.surcharge}" min="0" step="0.01" data-product-id="${item.productId}"></td>
@@ -230,6 +234,15 @@ function updateCartDisplay() {
                 }
             });
 
+            // Agregar evento para actualizar precio
+            const priceInput = row.querySelector('.price-input');
+            priceInput.addEventListener('change', (e) => {
+                const newPrice = parseFloat(e.target.value);
+                if (!isNaN(newPrice) && newPrice !== item.price) {
+                    item.price = newPrice;
+                    updateCartDisplay();
+                    saveCartToIndexedDB();
+                }
             // Evento para descuento
             const discountInput = row.querySelector('.discount-input');
             discountInput.addEventListener('change', (e) => {
