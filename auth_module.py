@@ -101,7 +101,7 @@ def handle_ldap_error(error):
     mensaje = "No se pudo verificar las credenciales. Parece que no estás conectado a la VPN." if "WinError 10060" in str(error) else str(error)
     logger.error(f"Falló la conexión LDAP: {mensaje}")
     flash(mensaje, "danger")
-    return False, mensaje
+    return mensaje
 
 def get_access_token_graph():
     """Obtiene el token de autenticación para Microsoft Graph."""
