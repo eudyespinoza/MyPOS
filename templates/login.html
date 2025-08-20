@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+{% extends "layout.html" %}
+
+{% block title %}Inicio de Sesión{% endblock %}
+
+{% block content %}
+<div id="loginPageContainer" class="login-container d-flex justify-content-center align-items-center min-vh-100">
+  <div id="loginCard" class="login-card p-4">
+    <div id="loginHeader" class="text-center mb-4">
+      <h3 id="loginTitle" class="fw-semibold login-title">Iniciar Sesión</h3>
+      <p id="loginSubtitle" class="login-subtitle">Ingresa tus credenciales para continuar</p>
+    </div>
+    <form id="loginForm" method="POST" onsubmit="showLoading();">
+      <div id="loginUsernameField" class="mb-4">
+        <label for="username" class="form-label fw-medium">Usuario</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-person"></i></span>
+          <input type="text" class="form-control" id="username" name="username" placeholder="Tu usuario" required>
+        </div>
+      </div>
+      <div id="loginPasswordField" class="mb-4">
+        <label for="password" class="form-label fw-medium">Contraseña</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-lock"></i></span>
+          <input type="password" class="form-control" id="password" name="password" placeholder="Tu contraseña" required>
+        </div>
+      </div>
+      <button id="loginSubmitButton" type="submit" class="btn btn-primary w-100 fw-semibold rounded-pill login-button">Ingresar</button>
+    </form>
+  </div>
+</div>
+
+<div id="loginToastContainer" class="toast-container position-fixed bottom-0 end-0 p-3">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="toast align-items-center text-bg-{{ category }} border-0" role="alert" data-bs-delay="3000">
+          <div class="d-flex">
+            <div class="toast-body">{{ message }}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+</div>
+
+<div id="loginLoadingOverlay" class="login-overlay d-none">
+  <div class="spinner-border text-primary" role="status">
+    <span class="visually-hidden">Cargando...</span>
+  </div>
+  <p class="mt-3">Iniciando sesión...</p>
+</div>
+
+<script>
+  function showLoading() {
+    document.getElementById('loginLoadingOverlay').classList.remove('d-none');
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    const toastElements = document.querySelectorAll('#loginToastContainer .toast');
+    toastElements.forEach(toastElement => new bootstrap.Toast(toastElement).show());
+    // Animación de entrada para la tarjeta de login
+    const loginCard = document.querySelector('#loginCard');
+    if (loginCard) {
+      loginCard.classList.add('active');
+    }
+  });
+</script>
+{% endblock %}

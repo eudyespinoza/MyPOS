@@ -1,0 +1,229 @@
+{% extends "layout.html" %}
+
+{% block title %}Configuración de Secuencias Numéricas{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2 class="text-center mb-4">Configuración de Secuencias Numéricas</h2>
+
+    <!-- Formulario de Configuración -->
+    <div class="card shadow-sm mb-4" style="background-color: var(--card-bg);">
+        <div class="card-body">
+            <h4 class="card-title">Nueva/Editar Secuencia</h4>
+            <form id="formConfigSecuencia">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label for="tiendaId" class="form-label">Tienda ID <span class="text-danger">*</span></label>
+                        <input type="text" id="tiendaId" class="form-control" required placeholder="Ej: TIENDA001">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="ptoVentaId" class="form-label">Punto de Venta ID <span class="text-danger">*</span></label>
+                        <input type="text" id="ptoVentaId" class="form-control" required placeholder="Ej: PTO01">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="tipoSecuencia" class="form-label">Tipo Secuencia <span class="text-danger">*</span></label>
+                        <select id="tipoSecuencia" class="form-select" required>
+                            <option value="" disabled selected>Seleccione...</option>
+                            <option value="Factura_A">Factura de venta A</option>
+                            <option value="Factura_B">Factura de venta B</option>
+                            <option value="Nota_Credito_A">Nota de crédito A</option>
+                            <option value="Nota_Credito_B">Nota de crédito B</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="secuenciaInicial" class="form-label">Secuencia Inicial <span class="text-danger">*</span></label>
+                        <input type="number" id="secuenciaInicial" class="form-control" value="1" min="1" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="prefijo" class="form-label">Prefijo</label>
+                        <input type="text" id="prefijo" class="form-control" placeholder="Ej: FV-A-">
+                    </div>
+                    <div class="col-md-4">
+                        <label for="sufijo" class="form-label">Sufijo</label>
+                        <input type="text" id="sufijo" class="form-control" placeholder="Ej: -2025">
+                    </div>
+                    <div class="col-md-4">
+                        <label for="longitud" class="form-label">Longitud (padding) <span class="text-danger">*</span></label>
+                        <input type="number" id="longitud" class="form-control" value="8" min="1" required>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-end mt-3">
+                    <button type="button" class="btn btn-outline-secondary rounded-pill me-2" onclick="limpiarFormulario()">Limpiar</button>
+                    <button type="submit" class="btn btn-primary rounded-pill">Guardar Configuración</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tabla de Secuencias Configuradas -->
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <h4 class="card-title">Secuencias Configuradas</h4>
+            <div class="table-responsive">
+                <table class="table table-striped table-hover" id="tablaSecuencias">
+                    <thead style="background-color: var(--table-header-bg);">
+                        <tr>
+                            <th>Tienda ID</th>
+                            <th>Pto. Venta ID</th>
+                            <th>Tipo</th>
+                            <th>Secuencia Actual</th>
+                            <th>Formato</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOM cargado, inicializando config_secuencias');
+    cargarSecuencias();
+});
+
+// Función para limpiar el formulario
+function limpiarFormulario() {
+    console.log('Limpiando formulario');
+    document.getElementById('formConfigSecuencia').reset();
+    document.getElementById('tipoSecuencia').value = '';
+}
+
+// Función para cargar secuencias en la tabla
+async function cargarSecuencias() {
+    console.log('Cargando secuencias...');
+    try {
+        const response = await fetchWithAuth('/api/secuencias/listar');
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al obtener secuencias');
+        }
+        const secuencias = await response.json();
+        const tbody = document.querySelector('#tablaSecuencias tbody');
+        tbody.innerHTML = '';
+        secuencias.forEach(seq => {
+            const formato = `${seq.prefijo || ''}${String(seq.secuencia_actual).padStart(seq.longitud, '0')}${seq.sufijo || ''}`;
+            const row = `
+                <tr>
+                    <td>${seq.tienda_id}</td>
+                    <td>${seq.pto_venta_id}</td>
+                    <td>${seq.tipo_secuencia}</td>
+                    <td>${seq.secuencia_actual}</td>
+                    <td>${formato}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary me-1" onclick="editarSecuencia('${seq.tienda_id}', '${seq.pto_venta_id}', '${seq.tipo_secuencia}')">Editar</button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="desactivarSecuencia('${seq.tienda_id}', '${seq.pto_venta_id}', '${seq.tipo_secuencia}')">Desactivar</button>
+                    </td>
+                </tr>`;
+            tbody.innerHTML += row;
+        });
+        console.log(`Secuencias cargadas: ${secuencias.length}`);
+    } catch (error) {
+        console.error('Error al cargar secuencias:', error);
+        showToast('danger', error.message || 'Error al cargar las secuencias');
+    }
+}
+
+// Función para precargar el formulario para edición
+async function editarSecuencia(tiendaId, ptoVentaId, tipo) {
+    console.log(`Editando secuencia: ${tiendaId}/${ptoVentaId}/${tipo}`);
+    try {
+        const response = await fetchWithAuth(`/api/secuencias/listar?tienda_id=${tiendaId}&pto_venta_id=${ptoVentaId}&tipo_secuencia=${tipo}`);
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al obtener datos de la secuencia');
+        }
+        const data = await response.json();
+        if (data.length > 0) {
+            const seq = data[0];
+            document.getElementById('tiendaId').value = seq.tienda_id;
+            document.getElementById('ptoVentaId').value = seq.pto_venta_id;
+            document.getElementById('tipoSecuencia').value = seq.tipo_secuencia;
+            document.getElementById('secuenciaInicial').value = seq.secuencia_actual;
+            document.getElementById('prefijo').value = seq.prefijo || '';
+            document.getElementById('sufijo').value = seq.sufijo || '';
+            document.getElementById('longitud').value = seq.longitud;
+            console.log('Formulario precargado para edición');
+        }
+    } catch (error) {
+        console.error('Error al cargar secuencia:', error);
+        showToast('danger', error.message || 'Error al cargar datos de la secuencia');
+    }
+}
+
+// Función para desactivar una secuencia
+async function desactivarSecuencia(tiendaId, ptoVentaId, tipo) {
+    console.log(`Desactivando secuencia: ${tiendaId}/${ptoVentaId}/${tipo}`);
+    if (!confirm('¿Estás seguro de desactivar esta secuencia?')) return;
+    try {
+        const response = await fetchWithAuth('/api/secuencias/configurar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tienda_id: tiendaId,
+                pto_venta_id: ptoVentaId,
+                tipo_secuencia: tipo,
+                activo: false
+            })
+        });
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al desactivar la secuencia');
+        }
+        showToast('success', 'Secuencia desactivada exitosamente');
+        cargarSecuencias();
+    } catch (error) {
+        console.error('Error al desactivar:', error);
+        showToast('danger', error.message || 'Error de conexión al desactivar la secuencia');
+    }
+}
+
+// Manejo del formulario de configuración
+document.getElementById('formConfigSecuencia').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    console.log('Formulario de configuración enviado');
+    const data = {
+        tienda_id: document.getElementById('tiendaId').value.trim(),
+        pto_venta_id: document.getElementById('ptoVentaId').value.trim(),
+        tipo_secuencia: document.getElementById('tipoSecuencia').value,
+        secuencia_inicial: parseInt(document.getElementById('secuenciaInicial').value),
+        prefijo: document.getElementById('prefijo').value.trim(),
+        sufijo: document.getElementById('sufijo').value.trim(),
+        longitud: parseInt(document.getElementById('longitud').value)
+    };
+    console.log('Datos del formulario:', data);
+
+    // Validación básica en el frontend
+    if (!data.tienda_id || !data.pto_venta_id || !data.tipo_secuencia || isNaN(data.longitud) || isNaN(data.secuencia_inicial)) {
+        console.error('Faltan campos requeridos en el formulario');
+        showToast('danger', 'Por favor, completa todos los campos requeridos');
+        return;
+    }
+
+    try {
+        const response = await fetchWithAuth('/api/secuencias/configurar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Error al configurar la secuencia');
+        }
+        const result = await response.json();
+        console.log('Respuesta del servidor:', result);
+        showToast('success', result.message || 'Secuencia configurada exitosamente');
+        limpiarFormulario();
+        cargarSecuencias();
+    } catch (error) {
+        console.error('Error al guardar configuración:', error);
+        showToast('danger', error.message || 'Error de conexión al configurar la secuencia');
+    }
+});
+</script>
+{% endblock %}
