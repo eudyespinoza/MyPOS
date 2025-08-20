@@ -11,6 +11,7 @@ from auth import auth_bp, login_required, logout
 from blueprints.autenticacion_avanzada import autenticacion_avanzada_bp
 from blueprints.facturacion_arca import facturacion_arca_bp
 from blueprints.secuencia_numerica import secuencia_bp
+from blueprints.pagos import pagos_bp
 from connectors.d365_interface import run_crear_presupuesto_batch, run_obtener_presupuesto_d365, run_actualizar_presupuesto_d365, run_validar_cliente_existente, run_alta_cliente_d365
 from connectors.get_token import get_access_token_d365, get_access_token_d365_qa
 from db.database import obtener_datos_tienda_por_id, obtener_empleados_by_email, actualizar_last_store, obtener_contador_pdf, save_cart, get_cart
@@ -1358,6 +1359,7 @@ app.register_blueprint(auth_bp, url_prefix='/auth')
 app.register_blueprint(autenticacion_avanzada_bp, url_prefix='/autenticacion_avanzada')
 app.register_blueprint(facturacion_arca_bp, url_prefix='/modulo_facturacion_arca')
 app.register_blueprint(secuencia_bp, url_prefix='/api/secuencias')
+app.register_blueprint(pagos_bp, url_prefix='/pagos')
 
 # 🔹 Ejecutar la aplicación
 if __name__ == "__main__":
