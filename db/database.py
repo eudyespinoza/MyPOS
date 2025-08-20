@@ -94,3 +94,29 @@ def get_access_token_d365_qa():
     except requests.exceptions.RequestException as e:
         logging.info(f"Consulta token a D365 FALLO. {e}")
         return None
+
+def obtener_facturas_emitidas(fecha_inicio, fecha_fin):
+    """Devuelve una lista simulada de facturas emitidas entre fechas."""
+    return [
+        {
+            "fecha": fecha_inicio,
+            "numero": "F0001",
+            "vendedor": "Juan",
+            "monto": 1000.0,
+        },
+        {
+            "fecha": fecha_fin,
+            "numero": "F0002",
+            "vendedor": "Ana",
+            "monto": 2000.0,
+        },
+    ]
+
+
+def obtener_saldos_por_vendedor(fecha_inicio, fecha_fin):
+    """Devuelve saldos simulados por vendedor en el rango de fechas."""
+    return [
+        {"vendedor": "Juan", "saldo": 500.0},
+        {"vendedor": "Ana", "saldo": 1500.0},
+    ]
+
