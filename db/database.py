@@ -41,11 +41,26 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+DB_FILE = os.path.join(ROOT_DIR, "mypos.db")
 
-def load_d365_config():
-    if 'd365' not in config:
-# ---------------------------------------------------------------------------
-# D365 helpers
+
+def init_db():
+    """Inicializa la base de datos local si no existe."""
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sap_productos (
+            codigo TEXT PRIMARY KEY,
+            surtido TEXT,
+            iva REAL,
+            unidad_medida TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
 
 def load_d365_config() -> Dict[str, str]:
     if "d365" not in config:
@@ -175,6 +190,67 @@ __all__ = [
         logging.info(f"Consulta token a D365 FALLO. {e}")
         return None
 
+
+def agregar_surtido_masivo(productos):
+    """Inserta o actualiza un listado de productos SAP."""
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.executemany(
+        """
+        INSERT OR REPLACE INTO sap_productos (codigo, surtido, iva, unidad_medida)
+        VALUES (?, ?, ?, ?)
+        """,
+        [(
+            p.get('codigo'),
+            p.get('surtido'),
+            p.get('iva'),
+            p.get('unidad_medida'),
+        ) for p in productos],
+    )
+    conn.commit()
+    total = cur.rowcount
+    conn.close()
+    return total
+
+
+def buscar_productos_sap(query):
+    """Busca productos SAP que coincidan con el texto indicado."""
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    like = f"%{query}%"
+    cur.execute(
+        "SELECT codigo, surtido, iva, unidad_medida FROM sap_productos WHERE codigo LIKE ? OR surtido LIKE ?",
+        (like, like),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [
+        {
+            'codigo': r[0],
+            'surtido': r[1],
+            'iva': r[2],
+            'unidad_medida': r[3],
+        }
+        for r in rows
+    ]
+
+
+def obtener_producto_sap(codigo):
+    """Obtiene un único producto SAP por código."""
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT codigo, surtido, iva, unidad_medida FROM sap_productos WHERE codigo = ?",
+        (codigo,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return {
+            'codigo': row[0],
+            'surtido': row[1],
+            'iva': row[2],
+            'unidad_medida': row[3],
 
 # ---- Gestión de pagos ----
 PAGOS_FILE = os.path.join(ROOT_DIR, "pagos.json")
