@@ -1,7 +1,7 @@
 from flask import Flask, render_template, redirect, url_for, session, jsonify, request, send_from_directory, flash
 from db.database import init_db, obtener_atributos, obtener_stores_from_parquet, obtener_stock, \
     obtener_grupos_cumplimiento, obtener_empleados, obtener_todos_atributos, guardar_token_d365, obtener_token_d365, \
-    obtener_producto_por_id
+    obtener_producto_por_id, get_config_pos_by_ids
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
@@ -11,6 +11,7 @@ from auth import auth_bp, login_required, logout
 from blueprints.autenticacion_avanzada import autenticacion_avanzada_bp
 from blueprints.facturacion_arca import facturacion_arca_bp
 from blueprints.secuencia_numerica import secuencia_bp
+from blueprints.config_pos import config_pos_bp
 from connectors.d365_interface import run_crear_presupuesto_batch, run_obtener_presupuesto_d365, run_actualizar_presupuesto_d365, run_validar_cliente_existente, run_alta_cliente_d365
 from connectors.get_token import get_access_token_d365, get_access_token_d365_qa
 from db.database import obtener_datos_tienda_por_id, obtener_empleados_by_email, actualizar_last_store, obtener_contador_pdf, save_cart, get_cart
@@ -491,6 +492,24 @@ def config_secuencias():
         logger.warning(f"Acceso denegado a /config/secuencias: {session.get('email')}")
         return redirect(url_for('productos'))
     return render_template('config_secuencias.html')
+
+
+@app.route('/config/pos')
+@login_required
+def config_pos():
+    if session.get('role') != 'admin':
+        flash("Acceso denegado: Solo administradores pueden configurar POS.", "danger")
+        logger.warning(f"Acceso denegado a /config/pos: {session.get('email')}")
+        return redirect(url_for('productos'))
+    return render_template('config_pos.html')
+
+
+@app.route('/api/config_pos/<tienda_id>/<pto_venta_id>')
+def obtener_config_pos(tienda_id, pto_venta_id):
+    config = get_config_pos_by_ids(tienda_id, pto_venta_id)
+    if not config:
+        return jsonify({'error': 'Configuración no encontrada'}), 404
+    return jsonify(config)
 
 @app.route('/api/stock/<codigo>/<store>')
 def api_stock_codigo_store(codigo, store):
@@ -1358,6 +1377,7 @@ app.register_blueprint(auth_bp, url_prefix='/auth')
 app.register_blueprint(autenticacion_avanzada_bp, url_prefix='/autenticacion_avanzada')
 app.register_blueprint(facturacion_arca_bp, url_prefix='/modulo_facturacion_arca')
 app.register_blueprint(secuencia_bp, url_prefix='/api/secuencias')
+app.register_blueprint(config_pos_bp, url_prefix='/api/config_pos')
 
 # 🔹 Ejecutar la aplicación
 if __name__ == "__main__":
