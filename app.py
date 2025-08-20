@@ -15,6 +15,7 @@ from blueprints.facturacion_arca import facturacion_arca_bp
 from blueprints.secuencia_numerica import secuencia_bp
 from blueprints.config_pos import config_pos_bp
 from blueprints.pagos import pagos_bp
+from blueprints.simulador import simulador_bp
 from connectors.d365_interface import (
     run_crear_presupuesto_batch,
     run_obtener_presupuesto_d365,
@@ -1665,6 +1666,7 @@ app.register_blueprint(pagos_bp, url_prefix='/pagos')
 app.register_blueprint(caja_bp, url_prefix='/caja')
 app.register_blueprint(pagos_bp, url_prefix='/pagos')
 app.register_blueprint(clientes_bp, url_prefix='/clientes')
+app.register_blueprint(simulador_bp, url_prefix='/pagos')
 
 # 🔹 Ejecutar la aplicación
 if __name__ == "__main__":
