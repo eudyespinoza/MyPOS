@@ -1,0 +1,20 @@
+{% extends 'layout_tablet.html' %}
+{% block title %}Nota de Crédito{% endblock %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-12">
+    <h1 class="h3 mb-4">Nota de Crédito</h1>
+    <form id="ncForm" class="needs-validation" novalidate>
+      <div class="mb-3">
+        <label class="form-label">Factura Asociada</label>
+        <input type="text" class="form-control form-control-lg" placeholder="Nro de factura" required>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Monto</label>
+        <input type="number" class="form-control form-control-lg" placeholder="0.00" required>
+      </div>
+      <button type="submit" class="btn btn-warning btn-lg w-100">Generar Nota de Crédito</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

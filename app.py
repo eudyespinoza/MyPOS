@@ -12,12 +12,37 @@ from blueprints.autenticacion_avanzada import autenticacion_avanzada_bp
 from blueprints.facturacion_arca import facturacion_arca_bp
 from blueprints.secuencia_numerica import secuencia_bp
 from blueprints.pagos import pagos_bp
+from connectors.d365_interface import (
+    run_crear_presupuesto_batch,
+    run_obtener_presupuesto_d365,
+    run_actualizar_presupuesto_d365,
+    run_validar_cliente_existente,
+    run_alta_cliente_d365,
+    guardar_numero_presupuesto,
+    obtener_numeros_presupuesto,
+)
+    guardar_presupuesto_local,
+    obtener_presupuestos_locales,
+)
+from blueprints.caja import caja_bp
+from blueprints.pagos import pagos_bp
+from blueprints.clientes import clientes_bp
 from connectors.d365_interface import run_crear_presupuesto_batch, run_obtener_presupuesto_d365, run_actualizar_presupuesto_d365, run_validar_cliente_existente, run_alta_cliente_d365
 from connectors.get_token import get_access_token_d365, get_access_token_d365_qa
-from db.database import obtener_datos_tienda_por_id, obtener_empleados_by_email, actualizar_last_store, obtener_contador_pdf, save_cart, get_cart
+from db.database import (
+    obtener_datos_tienda_por_id,
+    obtener_empleados_by_email,
+    actualizar_last_store,
+    obtener_contador_pdf,
+    save_cart,
+    get_cart,
+)
 from functools import lru_cache
 from services.email_service import enviar_correo_fallo
+from services.search_service import indexar_productos, buscar_productos
+from services.product_index import index_products, search_products
 import os
+import io
 import datetime
 import pyarrow.parquet as pq
 import pyarrow as pa
@@ -27,11 +52,40 @@ import threading
 from datetime import timedelta, timezone
 import json
 import requests
+import redis
 from config import CACHE_FILE_PRODUCTOS, CACHE_FILE_STOCK, CACHE_FILE_CLIENTES, CACHE_FILE_EMPLEADOS, CACHE_FILE_ATRIBUTOS
 
 clientes_lock = threading.Lock()
 
 app = Flask(__name__, static_folder='static')
+
+# 🔹 Configuración de Redis para caché
+redis_client = redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+
+
+def cache_get_json(key):
+    data = redis_client.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+
+def cache_set_json(key, value, ex=3600):
+    redis_client.set(key, json.dumps(value), ex=ex)
+
+
+def cache_get_table(key):
+    data = redis_client.get(key)
+    if data:
+        buffer = io.BytesIO(data)
+        return pq.read_table(buffer)
+    return None
+
+
+def cache_set_table(key, table, ex=3600):
+    buffer = io.BytesIO()
+    pq.write_table(table, buffer)
+    redis_client.set(key, buffer.getvalue(), ex=ex)
 
 # 🔹 Inicializar la base de datos
 init_db()
@@ -111,6 +165,10 @@ def actualizar_cache_clientes():
 
 def obtener_clientes_cache():
     """Obtiene los clientes desde el archivo Parquet en memoria."""
+    cached_clients = cache_get_json('clientes_cache')
+    if cached_clients:
+        return cached_clients
+
     if os.path.exists(CACHE_FILE_CLIENTES):
         mod_time = datetime.date.fromtimestamp(os.path.getmtime(CACHE_FILE_CLIENTES))
         if mod_time != datetime.date.today():
@@ -126,6 +184,7 @@ def obtener_clientes_cache():
             logger.error("No se pudo cargar la tabla de clientes desde el Parquet.")
             return []
         clients = [{col: table[col][i].as_py() for col in table.column_names} for i in range(len(table))]
+        cache_set_json('clientes_cache', clients, ex=86400)
         return clients
     except Exception as e:
         logger.error(f"Error al leer clientes desde Parquet después de actualización: {e}", exc_info=True)
@@ -133,6 +192,10 @@ def obtener_clientes_cache():
 
 def obtener_productos_cache():
     """Obtiene los productos desde el archivo Parquet en memoria."""
+    cached_table = cache_get_table('productos_cache')
+    if cached_table is not None:
+        return cached_table
+
     if os.path.exists(CACHE_FILE_PRODUCTOS):
         mod_time = datetime.date.fromtimestamp(os.path.getmtime(CACHE_FILE_PRODUCTOS))
         if mod_time != datetime.date.today():
@@ -147,6 +210,7 @@ def obtener_productos_cache():
         if table is None:
             logger.error("No se pudo cargar la tabla de productos desde el Parquet.")
             return None
+        cache_set_table('productos_cache', table, ex=86400)
         return table
     except Exception as e:
         logger.error(f"Error al leer productos desde Parquet: {e}", exc_info=True)
@@ -484,6 +548,13 @@ def productos():
     last_store = session.get('last_store', 'BA001GC')
     return render_template('index.html', stores=stores, last_store=last_store)
 
+
+@app.route('/presupuestos')
+@login_required
+def presupuestos_page():
+    """Página para gestionar presupuestos y carritos."""
+    return render_template('presupuestos.html')
+
 @app.route('/config/secuencias')
 @login_required
 def config_secuencias():
@@ -492,6 +563,13 @@ def config_secuencias():
         logger.warning(f"Acceso denegado a /config/secuencias: {session.get('email')}")
         return redirect(url_for('productos'))
     return render_template('config_secuencias.html')
+
+
+@app.route('/presupuestos')
+@login_required
+def presupuestos():
+    """Página simple para gestionar búsqueda y recuperación de presupuestos."""
+    return render_template('presupuestos.html')
 
 @app.route('/api/stock/<codigo>/<store>')
 def api_stock_codigo_store(codigo, store):
@@ -720,6 +798,8 @@ def create_quotation():
             return jsonify({"error": error}), 500
 
         logger.info(f"Presupuesto creado: {quotation_number}")
+        guardar_numero_presupuesto(quotation_number)
+        guardar_presupuesto_local(quotation_number)
         return jsonify({"quotation_number": quotation_number}), 201
 
     except Exception as e:
@@ -823,6 +903,7 @@ def update_quotation(quotation_id):
             return jsonify({"error": error}), 500
 
         logger.info(f"Presupuesto {quotation_id} actualizado exitosamente")
+        guardar_numero_presupuesto(quotation_number)
         return jsonify({"quotation_number": quotation_number}), 200
 
     except Exception as e:
@@ -969,6 +1050,40 @@ def api_productos_by_code():
         return jsonify(products), 200
     except Exception as e:
         logger.error(f"Error en búsqueda de producto por código: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/index_products', methods=['POST'])
+@login_required
+def api_index_products():
+    """Indexa productos en MongoDB para búsquedas rápidas."""
+    try:
+        table = obtener_productos_cache()
+        if table is None:
+            return jsonify({"error": "No se pudo cargar los productos"}), 500
+        import pandas as pd
+        df = table.select(['Número de Producto', 'Nombre del Producto']).to_pandas()
+        productos = (
+            {"sku": row['Número de Producto'], "descripcion": row['Nombre del Producto']}
+            for _, row in df.iterrows()
+        )
+        count = indexar_productos(list(productos))
+        return jsonify({"indexed": count}), 200
+    except Exception as e:
+        logger.error(f"Error al indexar productos: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/search_products_index')
+@login_required
+def api_search_products_index():
+    """Busca productos en el índice de Mongo por SKU o descripción."""
+    term = request.args.get('q', '').strip()
+    try:
+        results = buscar_productos(term)
+        return jsonify(results), 200
+    except Exception as e:
+        logger.error(f"Error al buscar productos en índice: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/save_local_quotation', methods=['POST'])
@@ -1322,6 +1437,68 @@ def get_user_cart():
         logger.error(f"Error al recuperar carrito: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/quotation_numbers', methods=['GET'])
+@login_required
+def api_quotation_numbers():
+    """Devuelve los números de presupuesto almacenados localmente."""
+    try:
+        numeros = obtener_numeros_presupuesto()
+        return jsonify(numeros), 200
+    except Exception as e:
+        logger.error(f"Error al obtener números de presupuesto: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+@app.route('/api/quotations', methods=['GET'])
+@login_required
+def list_saved_quotations():
+    """Retorna los números de presupuestos almacenados localmente."""
+    return jsonify(obtener_presupuestos_locales())
+
+
+@app.route('/api/products/index', methods=['POST'])
+@login_required
+def api_index_productos():
+    """Indexa productos en una colección Mongo en memoria."""
+    table = obtener_productos_cache()
+    if table is None:
+        return jsonify({"error": "No hay productos para indexar"}), 500
+    try:
+        df = table.to_pandas()
+    except Exception as e:
+        logger.error(f"Error convirtiendo productos a DataFrame: {e}")
+        return jsonify({"error": "Error procesando productos"}), 500
+    productos = []
+    for _, row in df.iterrows():
+        sku = row.get('ProductNumber') or row.get('productId') or row.get('sku')
+        descripcion = row.get('ProductName') or row.get('productName') or row.get('description')
+        productos.append({"sku": str(sku), "description": descripcion})
+    index_products(productos)
+    return jsonify({"indexed": len(productos)})
+
+
+@app.route('/api/products/search')
+@login_required
+def api_search_productos():
+    """Busca productos indexados por SKU o descripción."""
+    query = request.args.get('query', '')
+    resultados = search_products(query)
+    if not resultados:
+        # Intentar indexar productos si el índice está vacío
+        table = obtener_productos_cache()
+        if table is not None:
+            try:
+                df = table.to_pandas()
+                productos = []
+                for _, row in df.iterrows():
+                    sku = row.get('ProductNumber') or row.get('productId') or row.get('sku')
+                    descripcion = row.get('ProductName') or row.get('productName') or row.get('description')
+                    productos.append({"sku": str(sku), "description": descripcion})
+                index_products(productos)
+                resultados = search_products(query)
+            except Exception as e:
+                logger.error(f"Error indexando productos durante la búsqueda: {e}")
+    return jsonify(resultados)
+
 @app.route('/api/clientes/search')
 @login_required
 def api_clientes_search():
@@ -1360,6 +1537,9 @@ app.register_blueprint(autenticacion_avanzada_bp, url_prefix='/autenticacion_ava
 app.register_blueprint(facturacion_arca_bp, url_prefix='/modulo_facturacion_arca')
 app.register_blueprint(secuencia_bp, url_prefix='/api/secuencias')
 app.register_blueprint(pagos_bp, url_prefix='/pagos')
+app.register_blueprint(caja_bp, url_prefix='/caja')
+app.register_blueprint(pagos_bp, url_prefix='/pagos')
+app.register_blueprint(clientes_bp, url_prefix='/clientes')
 
 # 🔹 Ejecutar la aplicación
 if __name__ == "__main__":
