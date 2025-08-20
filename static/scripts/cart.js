@@ -154,7 +154,12 @@ function addToCartConfirmed() {
             quantity: quantity,
             multiplo: currentProductToAdd.multiplo,
             unidadMedida: currentProductToAdd.unidadMedida,
-            available: true // Asumimos disponible inicialmente
+            available: true, // Asumimos disponible inicialmente
+            modalidad_entrega: null,
+            lat: null,
+            lng: null,
+            costo_flete: 0,
+            id_linea: null
         });
     }
     updateCartDisplay();
@@ -426,7 +431,18 @@ function loadCartFromIndexedDB() {
 
         request.onsuccess = (event) => {
             const result = event.target.result;
-            resolve(result ? result.cart : null);
+            let loadedCart = result ? result.cart : null;
+            if (loadedCart && Array.isArray(loadedCart.items)) {
+                loadedCart.items = loadedCart.items.map(item => ({
+                    modalidad_entrega: null,
+                    lat: null,
+                    lng: null,
+                    costo_flete: 0,
+                    id_linea: null,
+                    ...item
+                }));
+            }
+            resolve(loadedCart);
         };
 
         request.onerror = (event) => {
