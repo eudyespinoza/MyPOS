@@ -1,4 +1,6 @@
 import logging
+import os
+from functools import wraps
 from flask import Blueprint, request, jsonify, session, redirect, url_for, flash, render_template
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
@@ -18,7 +20,34 @@ autenticacion_avanzada_bp = Blueprint('autenticacion_avanzada', __name__)
 # MongoDB
 client = MongoClient('mongodb://localhost:27017/')
 db = client['pos_db']
-usuarios_roles = db['usuarios_roles']  # Colección: {'email': str, 'role': 'admin'/'user'}
+usuarios_roles = db['usuarios_roles']  # Colección: {'email': str, 'role': str, 'permissions': [str]}
+
+# Clave superior para acciones sensibles
+CLAVE_SUPERIOR = os.getenv('CLAVE_SUPERIOR', 'supersecret')
+
+
+def requiere_permiso_clave(permission):
+    """Valida rol, permiso y clave superior para acciones sensibles."""
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if session.get('role') != 'admin':
+                return jsonify({'error': 'No autorizado'}), 403
+            if permission not in session.get('permissions', []):
+                return jsonify({'error': 'Permiso insuficiente'}), 403
+            clave = None
+            if request.is_json:
+                clave = (request.json or {}).get('clave_superior')
+            if clave is None:
+                clave = request.form.get('clave_superior')
+            if clave != CLAVE_SUPERIOR:
+                return jsonify({'error': 'Clave superior incorrecta'}), 403
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 @autenticacion_avanzada_bp.route('/login', methods=['GET', 'POST'])
@@ -53,9 +82,10 @@ def login_avanzado():
         numero_sap = datos['numero_sap']
         last_store = datos['last_store']
 
-        # Obtener rol desde MongoDB (default 'user' si no existe)
+        # Obtener rol y permisos desde MongoDB (defaults)
         user_role = usuarios_roles.find_one({'email': email})
         role = user_role['role'] if user_role else 'user'
+        permissions = user_role.get('permissions', []) if user_role else []
 
         # Guardar en sesión (compatible con app.py)
         session['usuario'] = nombre_completo
@@ -65,6 +95,7 @@ def login_avanzado():
         session['email'] = email
         session['last_store'] = last_store
         session['role'] = role  # Añadir rol para navbar dinámica
+        session['permissions'] = permissions
 
         print(nombre_completo, email, id_puesto, empleado_d365, numero_sap, role)
         flash("Iniciaste sesión con éxito.", "success")
@@ -98,12 +129,16 @@ def configs_menu():
 
 @autenticacion_avanzada_bp.route('/set_role', methods=['POST'])
 @login_required
+@requiere_permiso_clave('manage_roles')
 def set_role():
-    if session.get('role') != 'admin':
-        return jsonify({'error': 'No autorizado'}), 403
     data = request.json
     email = data['email']
     role = data['role']
-    usuarios_roles.update_one({'email': email}, {'$set': {'role': role}}, upsert=True)
-    logger.info(f"Rol actualizado: {email} -> {role}")
-    return jsonify({'message': 'Rol actualizado'})
+    permissions = data.get('permissions', [])
+    usuarios_roles.update_one(
+        {'email': email},
+        {'$set': {'role': role, 'permissions': permissions}},
+        upsert=True,
+    )
+    logger.info(f"Rol actualizado: {email} -> {role} | permisos: {permissions}")
+    return jsonify({'message': 'Rol y permisos actualizados'})

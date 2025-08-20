@@ -21,6 +21,7 @@ import requests
 
 # ---------------------------------------------------------------------------
 # Configuración y logging
+import sqlite3
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(os.path.dirname(ROOT_DIR), "config.ini")
@@ -150,3 +151,93 @@ __all__ = [
     "get_cart",
 ]
 
+    except requests.exceptions.RequestException as e:
+        logging.info(f"Consulta token a D365 FALLO. {e}")
+        return None
+
+def obtener_facturas_emitidas(fecha_inicio, fecha_fin):
+    """Devuelve una lista simulada de facturas emitidas entre fechas."""
+    return [
+        {
+            "fecha": fecha_inicio,
+            "numero": "F0001",
+            "vendedor": "Juan",
+            "monto": 1000.0,
+        },
+        {
+            "fecha": fecha_fin,
+            "numero": "F0002",
+            "vendedor": "Ana",
+            "monto": 2000.0,
+        },
+    ]
+
+
+def obtener_saldos_por_vendedor(fecha_inicio, fecha_fin):
+    """Devuelve saldos simulados por vendedor en el rango de fechas."""
+    return [
+        {"vendedor": "Juan", "saldo": 500.0},
+        {"vendedor": "Ana", "saldo": 1500.0},
+    ]
+
+DB_PATH = os.path.join(ROOT_DIR, 'clientes.db')
+
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        '''CREATE TABLE IF NOT EXISTS clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            dni TEXT NOT NULL,
+            cuit TEXT UNIQUE NOT NULL,
+            direccion TEXT
+        )'''
+    )
+    conn.commit()
+    conn.close()
+
+
+def guardar_cliente(datos):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        'INSERT INTO clientes (nombre, dni, cuit, direccion) VALUES (?,?,?,?)',
+        (datos['nombre'], datos['dni'], datos['cuit'], datos.get('direccion'))
+    )
+    conn.commit()
+    conn.close()
+
+
+def actualizar_cliente(cuit, datos):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        'UPDATE clientes SET nombre=?, dni=?, cuit=?, direccion=? WHERE cuit=?',
+        (
+            datos['nombre'],
+            datos['dni'],
+            datos['cuit'],
+            datos.get('direccion'),
+            cuit,
+        )
+    )
+    conn.commit()
+    conn.close()
+
+
+def buscar_cliente_por_cuit(cuit):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT nombre, dni, cuit, direccion FROM clientes WHERE cuit=?', (cuit,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {
+            'nombre': row[0],
+            'dni': row[1],
+            'cuit': row[2],
+            'direccion': row[3]
+        }
+    return None
