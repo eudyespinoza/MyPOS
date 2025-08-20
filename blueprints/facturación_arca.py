@@ -14,6 +14,7 @@ from zeep.plugins import HistoryPlugin
 from auth_module import login_required
 from dateutil.parser import isoparse
 from db.database import obtener_stores_from_parquet
+from requests.exceptions import RequestException
 
 # Configuración de logging
 logger = logging.getLogger('modulo_facturacion_arca')
@@ -33,6 +34,8 @@ try:
     client.server_info()  # Validar conexión
     db = client['pos_db']
     config_collection = db['config_facturacion_arca']
+    pendientes_caea_collection = db['pendientes_caea']
+    acopio_collection = db['acopios']
     logger.info("Conexión a MongoDB establecida correctamente")
 except PyMongoError as e:
     logger.error(f"Error en conexión MongoDB: {str(e)}", exc_info=True)
@@ -48,6 +51,28 @@ def get_certificado_data(config):
         with open(cert_path, 'rb') as f:
             return base64.b64encode(f.read()).decode('utf-8')
     return config.get('certificado_data')
+
+
+def consultar_padron_afip(cuit):
+    """Consulta el padrón AFIP para un CUIT dado."""
+    try:
+        resp = requests.get(f"https://api.afip.gob.ar/padron/v2/persona/{cuit}", timeout=5)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.warning(f"Error consultando padrón AFIP: {e}")
+    return None
+
+
+def consultar_percepciones_afip(cuit):
+    """Consulta las percepciones de AFIP para un CUIT dado."""
+    try:
+        resp = requests.get(f"https://api.afip.gob.ar/percepcion/v1/{cuit}", timeout=5)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        logger.warning(f"Error consultando percepciones AFIP: {e}")
+    return None
 
 def ta_valido(config):
     """
@@ -347,13 +372,15 @@ def config_facturacion():
 @facturacion_arca_bp.route('/facturar', methods=['POST'])
 @login_required
 def facturar():
-    """
-    Genera una factura usando WSFEv1 de AFIP, obteniendo el número de comprobante desde el módulo de secuencias.
-    """
-    logger.debug(f"Iniciando facturación para usuario {session.get('email')}")
     data = request.get_json()
+    return emitir_comprobante(data)
+
+
+def emitir_comprobante(data):
+    """Genera una factura o nota de crédito usando WSFEv1 de AFIP."""
+    logger.debug(f"Iniciando facturación para usuario {session.get('email')}")
     if not data:
-        logger.error("No se recibió datos JSON válidos")
+        logger.error("No se recibieron datos válidos")
         return jsonify({'error': 'No se recibieron datos válidos'}), 400
 
     try:
@@ -373,6 +400,8 @@ def facturar():
             '7': 'Nota_Credito_B'
         }
         tipo_secuencia = tipo_map.get(str(tipo_cbte), 'Factura_B')
+        vendedor = data.get('vendedor')
+        cajero = data.get('cajero')
 
         # Obtener número de comprobante
         seq_response = requests.post(
@@ -409,6 +438,9 @@ def facturar():
             "Cuit": cuit_emisor
         }
 
+        padron_info = None
+        percepciones_info = None
+
         # Modo Prueba
         if 'cart' not in data:
             logger.info("Procesando factura en modo prueba")
@@ -420,6 +452,8 @@ def facturar():
             imp_total = float(data.get('imp_total', round(neto + imp_iva, 2)))
             concepto = int(data.get('concepto', 1))
             fecha_cbte = data.get('fecha_cbte', datetime.now().strftime('%Y%m%d'))
+            padron_info = consultar_padron_afip(cuit_receptor)
+            percepciones_info = consultar_percepciones_afip(cuit_receptor)
 
             if neto > 9999999999999.99 or imp_iva > 9999999999999.99 or imp_total > 9999999999999.99:
                 logger.warning("Importe excede el límite de AFIP")
@@ -470,6 +504,8 @@ def facturar():
             cuit_receptor = int(data['cart']['client']['nif'] or data['cart']['client']['numero_cliente'] or '0')
             pto_vta = int(data.get('punto_venta', config['punto_venta']))
             items = data['cart']['items']
+            padron_info = consultar_padron_afip(cuit_receptor)
+            percepciones_info = consultar_percepciones_afip(cuit_receptor)
 
             neto = float(data.get('imp_neto', sum(float(item.get('price', 0)) * float(item.get('quantity', 0)) for item in items)))
             imp_iva = float(data.get('imp_iva', sum(
@@ -522,7 +558,21 @@ def facturar():
             }
 
         logger.debug(f"Factura a enviar: {req}")
-        result = client.service.FECAESolicitar(auth, req)
+        try:
+            result = client.service.FECAESolicitar(auth, req)
+        except Exception as e:
+            logger.error(f"Fallo en FECAESolicitar: {e}")
+            if data.get('caea'):
+                pendientes_caea_collection.insert_one({
+                    'req': req,
+                    'caea': data['caea'],
+                    'vendedor': vendedor,
+                    'cajero': cajero,
+                    'timestamp': datetime.now()
+                })
+                return jsonify({'error': 'AFIP no disponible, comprobante almacenado', 'pendiente': True}), 503
+            raise
+
         logger.debug(f"Respuesta cruda de AFIP: {result}")
 
         if 'FeDetResp' in result:
@@ -537,6 +587,10 @@ def facturar():
                         'autorizacion': cae,
                         'vencimiento': caefchvto,
                         'nro_cbte': nro_cbte,
+                        'padron': padron_info,
+                        'percepciones': percepciones_info,
+                        'vendedor': vendedor,
+                        'cajero': cajero,
                         'message': 'Factura emitida exitosamente'
                     })
                 else:
@@ -569,6 +623,73 @@ def facturar():
         return jsonify({'error': str(ve)}), 400
     except Exception as e:
         logger.error(f'Error en facturación ARCA: {str(e)}', exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@facturacion_arca_bp.route('/factura', methods=['GET'])
+@login_required
+def factura_form():
+    return render_template('facturacion_arca/factura.html')
+
+
+@facturacion_arca_bp.route('/nota_credito', methods=['GET', 'POST'])
+@login_required
+def nota_credito():
+    if request.method == 'POST':
+        data = request.get_json()
+        if not data:
+            logger.error("No se recibieron datos válidos para la nota de crédito")
+            return jsonify({'error': 'No se recibieron datos válidos'}), 400
+        data['tipo_cbte'] = data.get('tipo_cbte', '7')
+        return emitir_comprobante(data)
+    return render_template('facturacion_arca/nota_credito.html')
+
+
+@facturacion_arca_bp.route('/acopio', methods=['GET', 'POST'])
+@login_required
+def acopio():
+    if request.method == 'POST':
+        data = request.get_json() or request.form.to_dict()
+        acopio_collection.insert_one({
+            'vendedor': data.get('vendedor'),
+            'cajero': data.get('cajero'),
+            'items': data.get('items'),
+            'fecha': datetime.now()
+        })
+        return jsonify({'message': 'Acopio registrado exitosamente'})
+    return render_template('facturacion_arca/acopio.html')
+
+
+@facturacion_arca_bp.route('/enviar_pendientes', methods=['POST'])
+@login_required
+def enviar_pendientes():
+    try:
+        config = config_collection.find_one({'_id': 'config_arca'})
+        if not config:
+            return jsonify({'error': 'Configuración ARCA no encontrada'}), 400
+
+        token, sign = obtener_ta(config)
+        history = HistoryPlugin()
+        settings = Settings(strict=False, xml_huge_tree=True)
+        wsdl = "https://wswhomo.afip.gov.ar/wsfev1/service.asmx?WSDL" if config.get('ambiente') == 'homologacion' else "https://servicios1.afip.gov.ar/wsfev1/service.asmx?WSDL"
+        client = Client(wsdl=wsdl, settings=settings, plugins=[history])
+        auth = {"Token": token, "Sign": sign, "Cuit": int(config['cuit'])}
+
+        pendientes = list(pendientes_caea_collection.find())
+        enviados = 0
+        for p in pendientes:
+            req = p['req']
+            req['FeDetReq']['FECAEDetRequest'][0]['CAEA'] = p['caea']
+            try:
+                client.service.FECAEARegInformativo(auth, req)
+                pendientes_caea_collection.delete_one({'_id': p['_id']})
+                enviados += 1
+            except Exception as e:
+                logger.error(f"Error enviando pendiente {p['_id']}: {e}")
+
+        return jsonify({'procesados': enviados})
+    except Exception as e:
+        logger.error(f"Error al enviar pendientes CAEA: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 def convertir_moneda_a_numero(valor):

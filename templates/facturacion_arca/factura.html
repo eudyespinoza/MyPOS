@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block title %}Emitir Factura{% endblock %}
+{% block content %}
+<div class="container mt-4">
+    <h2>Emitir Factura</h2>
+    <form id="facturaForm">
+        <div class="mb-3">
+            <label for="doc_nro" class="form-label">CUIT Receptor</label>
+            <input type="text" class="form-control" id="doc_nro" required>
+        </div>
+        <div class="mb-3">
+            <label for="vendedor" class="form-label">Vendedor</label>
+            <input type="text" class="form-control" id="vendedor">
+        </div>
+        <div class="mb-3">
+            <label for="cajero" class="form-label">Cajero</label>
+            <input type="text" class="form-control" id="cajero">
+        </div>
+        <button type="submit" class="btn btn-primary">Emitir</button>
+    </form>
+    <div id="facturaResult" class="mt-3 alert d-none"></div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+document.getElementById('facturaForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const payload = {
+        doc_nro: document.getElementById('doc_nro').value,
+        vendedor: document.getElementById('vendedor').value,
+        cajero: document.getElementById('cajero').value
+    };
+    const res = await fetchWithAuth('/modulo_facturacion_arca/facturar', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    const div = document.getElementById('facturaResult');
+    div.classList.remove('d-none','alert-success','alert-danger');
+    if (data.autorizacion){
+        div.classList.add('alert-success');
+        div.textContent = `CAE: ${data.autorizacion}`;
+    } else {
+        div.classList.add('alert-danger');
+        div.textContent = data.error || 'Error';
+    }
+});
+</script>
+{% endblock %}
