@@ -722,7 +722,9 @@ function initializeFilters(previousCategory = "", previousCoverage = "") {
   // Para el filtro de tiendas, se carga sólo en la carga inicial (usando la variable global backendStores)
   const storeFilterElement = document.getElementById("storeFilter");
   if (storeFilterElement && storeFilterElement.options.length === 0) {
-    const storeSet = new Set(backendStores);
+    // Aseguramos que backendStores sea un arreglo para evitar errores si es null o undefined
+    const backendStoresArray = Array.isArray(window.backendStores) ? window.backendStores : [];
+    const storeSet = new Set(backendStoresArray);
     populateFilter("storeFilter", storeSet, true);
   }
 }
