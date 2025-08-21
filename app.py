@@ -1,7 +1,7 @@
 from flask import Flask, render_template, redirect, url_for, session, jsonify, request, send_from_directory, flash, send_file
 from db.database import init_db, obtener_atributos, obtener_stores_from_parquet, obtener_stock, \
     obtener_grupos_cumplimiento, obtener_empleados, obtener_todos_atributos, guardar_token_d365, obtener_token_d365, \
-    obtener_producto_por_id, get_config_pos_by_ids, obtener_producto_por_id, buscar_productos_sap, obtener_producto_sap
+    get_config_pos_by_ids, buscar_productos_sap, obtener_producto_sap
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
@@ -36,6 +36,7 @@ from functools import lru_cache
 from services.email_service import enviar_correo_fallo
 from services.search_service import indexar_productos, buscar_productos
 from services.product_index import index_products, search_products
+from services.product_service import obtener_producto_por_id
 import os
 import io
 import datetime
