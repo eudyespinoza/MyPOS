@@ -775,15 +775,26 @@ def save_cart(user_id: str, cart: dict, timestamp: str) -> bool:
         return False
 
 def get_cart(user_id: str) -> dict:
+    """Recupera el carrito de compras de un usuario.
+
+    Si no existe información para el ``user_id`` proporcionado, se
+    retorna un diccionario válido en Python con una estructura similar a
+    la que almacena ``save_cart``.  Cualquier valor ``null`` que pudiera
+    aparecer en la fuente se reemplaza por ``None`` para asegurar que el
+    resultado sea un objeto Python válido.
+    """
+
+    default_cart = {"cart": {"items": []}, "timestamp": None}
+
     if not os.path.exists(CARTS_FILE):
-        return {"items": []}
+        return default_cart
     try:
         with open(CARTS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data.get(user_id, {"items": []})
+        return data.get(user_id, default_cart)
     except Exception as exc:  # pragma: no cover - logging
         logging.error("Error al obtener carrito de %s: %s", user_id, exc)
-        return {"items": []}
+        return default_cart
 
 # ---------------------------------------------------------------------------
 # Config POS helpers
