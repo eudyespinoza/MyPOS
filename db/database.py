@@ -52,6 +52,8 @@ DB_PATHS = {
     "misc": os.path.join(ROOT_DIR, "misc.db"),
     "sap": os.path.join(ROOT_DIR, "mypos.db"),
     "pos_config": os.path.join(ROOT_DIR, "pos_config.db"),
+    "clientes": os.path.join(ROOT_DIR, "clientes.db"),
+    "pagos": os.path.join(ROOT_DIR, "pagos.db"),
 }
 
 
@@ -237,6 +239,57 @@ def init_db() -> None:
         )
         conn.commit()
 
+    # Clientes
+    with conectar_db("clientes") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS clientes (
+                cuit TEXT PRIMARY KEY,
+                nombre TEXT,
+                dni TEXT,
+                direccion TEXT
+            )
+            """
+        )
+        conn.commit()
+
+    # Pagos y facturación
+    with conectar_db("pagos") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS operaciones (
+                operacion_id TEXT PRIMARY KEY,
+                estado TEXT
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pagos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operacion_id TEXT,
+                efectivo REAL,
+                transferencia REAL,
+                tarjeta REAL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (operacion_id) REFERENCES operaciones (operacion_id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS facturas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT,
+                vendedor TEXT,
+                total REAL
+            )
+            """
+        )
+        conn.commit()
+
     # Misceláneos (token, contador)
     with conectar_db("misc") as conn:
         cur = conn.cursor()
@@ -251,6 +304,14 @@ def init_db() -> None:
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS contador_pdf (
+                id INTEGER PRIMARY KEY CHECK (id=1),
+                valor INTEGER
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS contador_presupuesto (
                 id INTEGER PRIMARY KEY CHECK (id=1),
                 valor INTEGER
             )
@@ -567,6 +628,129 @@ def obtener_contador_pdf() -> int:
         conn.commit()
         return valor
 
+def obtener_contador_presupuesto() -> int:
+    with conectar_db("misc") as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT valor FROM contador_presupuesto WHERE id = 1")
+        row = cur.fetchone()
+        valor = (row[0] if row else 0) + 1
+        cur.execute(
+            "INSERT OR REPLACE INTO contador_presupuesto (id, valor) VALUES (1, ?)",
+            (valor,),
+        )
+        conn.commit()
+        return valor
+
+# ---------------------------------------------------------------------------
+# Gestión de clientes
+# ---------------------------------------------------------------------------
+
+def guardar_cliente(cliente: Dict[str, Any]) -> None:
+    with conectar_db("clientes") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR REPLACE INTO clientes (cuit, nombre, dni, direccion) VALUES (?, ?, ?, ?)",
+            (
+                cliente.get("cuit"),
+                cliente.get("nombre"),
+                cliente.get("dni"),
+                cliente.get("direccion"),
+            ),
+        )
+        conn.commit()
+
+def actualizar_cliente(cuit: str, datos: Dict[str, Any]) -> bool:
+    with conectar_db("clientes") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE clientes SET cuit = ?, nombre = ?, dni = ?, direccion = ? WHERE cuit = ?",
+            (
+                datos.get("cuit"),
+                datos.get("nombre"),
+                datos.get("dni"),
+                datos.get("direccion"),
+                cuit,
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+def buscar_cliente_por_cuit(cuit: str) -> Dict[str, Any] | None:
+    with conectar_db("clientes") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT cuit, nombre, dni, direccion FROM clientes WHERE cuit = ?",
+            (cuit,),
+        )
+        row = cur.fetchone()
+        if row:
+            return {
+                "cuit": row[0],
+                "nombre": row[1],
+                "dni": row[2],
+                "direccion": row[3],
+            }
+        return None
+
+# ---------------------------------------------------------------------------
+# Pagos y facturación
+# ---------------------------------------------------------------------------
+
+def guardar_pago(operacion_id: str, pagos: Dict[str, float]) -> None:
+    with conectar_db("pagos") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR IGNORE INTO operaciones (operacion_id, estado) VALUES (?, ?)",
+            (operacion_id, "pendiente"),
+        )
+        cur.execute(
+            "INSERT INTO pagos (operacion_id, efectivo, transferencia, tarjeta) VALUES (?, ?, ?, ?)",
+            (
+                operacion_id,
+                pagos.get("efectivo", 0.0),
+                pagos.get("transferencia", 0.0),
+                pagos.get("tarjeta", 0.0),
+            ),
+        )
+        conn.commit()
+
+def actualizar_estado_operacion(operacion_id: str, estado: str) -> None:
+    with conectar_db("pagos") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR IGNORE INTO operaciones (operacion_id, estado) VALUES (?, ?)",
+            (operacion_id, estado),
+        )
+        cur.execute(
+            "UPDATE operaciones SET estado = ? WHERE operacion_id = ?",
+            (estado, operacion_id),
+        )
+        conn.commit()
+
+def obtener_facturas_emitidas(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    with conectar_db("pagos") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, fecha, vendedor, total FROM facturas WHERE fecha BETWEEN ? AND ?",
+            (start_date, end_date),
+        )
+        return [
+            {"id": r[0], "fecha": r[1], "vendedor": r[2], "total": r[3]}
+            for r in cur.fetchall()
+        ]
+
+def obtener_saldos_por_vendedor(start_date: str, end_date: str) -> List[Dict[str, Any]]:
+    with conectar_db("pagos") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT vendedor, SUM(total) FROM facturas WHERE fecha BETWEEN ? AND ? GROUP BY vendedor",
+            (start_date, end_date),
+        )
+        return [
+            {"vendedor": r[0], "total": r[1]}
+            for r in cur.fetchall()
+        ]
+
 # ---------------------------------------------------------------------------
 # Gestión de carrito de compras
 # ---------------------------------------------------------------------------
@@ -725,8 +909,18 @@ __all__ = [
     "guardar_token_d365",
     "obtener_token_d365",
     "obtener_contador_pdf",
+    "obtener_contador_presupuesto",
     "save_cart",
     "get_cart",
+    # Clientes
+    "guardar_cliente",
+    "actualizar_cliente",
+    "buscar_cliente_por_cuit",
+    # Pagos y facturación
+    "guardar_pago",
+    "actualizar_estado_operacion",
+    "obtener_facturas_emitidas",
+    "obtener_saldos_por_vendedor",
     # Config POS
     "add_config_pos",
     "get_all_config_pos",
