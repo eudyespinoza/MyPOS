@@ -809,9 +809,6 @@ def api_productos():
             flash(user_msg, "warning")
             return jsonify({"productos": [], "message": user_msg}), 500
 
-        store_filter = pc.match_substring(pc.field('store_number'), store)
-        filtered_table = table.filter(store_filter)
-
         column_mapping = {
             'Número de Producto': 'numero_producto',
             'Nombre de Categoría de Producto': 'categoria_producto',
@@ -825,10 +822,13 @@ def api_productos():
             'Signo': 'signo',
             'Multiplo': 'multiplo'
         }
-        renamed_table = filtered_table.rename_columns([column_mapping.get(col, col) for col in filtered_table.column_names])
+        table = table.rename_columns([column_mapping.get(col, col) for col in table.column_names])
+
+        store_filter = pc.match_substring(pc.field('store_number'), store)
+        filtered_table = table.filter(store_filter)
 
         import pandas as pd
-        df = renamed_table.to_pandas()
+        df = filtered_table.to_pandas()
         df['precio_final_con_iva'] = df['precio_final_con_iva'].apply(lambda x: f"{x:,.2f}".replace(".", "X").replace(",", ".").replace("X", ","))
         df['precio_final_con_descuento'] = df['precio_final_con_descuento'].apply(lambda x: f"{x:,.2f}".replace(".", "X").replace(",", ".").replace("X", ","))
         df['total_disponible_venta'] = df['total_disponible_venta'].apply(lambda x: f"{x:,.2f}".replace(".", "X").replace(",", ".").replace("X", ","))
