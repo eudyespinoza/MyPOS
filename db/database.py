@@ -1,28 +1,26 @@
-"""Database utility functions for MyPOS.
+"""Database helpers and local persistence utilities for MyPOS.
 
-This module previously contained only helpers to request tokens from the D365
-service.  It now also provides lightweight persistence for shopping carts so
-that the application can store cart state between sessions without relying on a
-full database backend.  Data is stored in a JSON file located next to this
-module.  The design favours simplicity and is intended mainly for development
-or small deployments.
+This module centralises all lightweight data storage used by the
+application.  Data is stored in several small SQLite databases located in
+the ``db`` folder.  The helper functions here provide both bulk loading
+routines (used by ``db.fabric`` to refresh the caches) and query helpers
+used by the web application.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import json
 import os
+import sqlite3
 import configparser
-from typing import Dict
+from typing import Dict, Iterable, List, Any
 
 import requests
 
-
 # ---------------------------------------------------------------------------
 # Configuración y logging
-import sqlite3
+# ---------------------------------------------------------------------------
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(os.path.dirname(ROOT_DIR), "config.ini")
@@ -41,31 +39,32 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# Ruta del archivo de base de datos para configuraciones POS
-DB_PATH = os.path.join(ROOT_DIR, 'pos_config.db')
+# ---------------------------------------------------------------------------
+# Rutas de bases de datos y helper de conexión
+# ---------------------------------------------------------------------------
 
-def load_d365_config():
-DB_FILE = os.path.join(ROOT_DIR, "mypos.db")
+DB_PATHS = {
+    "atributos": os.path.join(ROOT_DIR, "atributos.db"),
+    "stock": os.path.join(ROOT_DIR, "stock.db"),
+    "grupos": os.path.join(ROOT_DIR, "grupos_cumplimiento.db"),
+    "empleados": os.path.join(ROOT_DIR, "empleados.db"),
+    "stores": os.path.join(ROOT_DIR, "stores.db"),
+    "misc": os.path.join(ROOT_DIR, "misc.db"),
+    "sap": os.path.join(ROOT_DIR, "mypos.db"),
+    "pos_config": os.path.join(ROOT_DIR, "pos_config.db"),
+}
 
 
+def conectar_db(nombre: str) -> sqlite3.Connection:
+    """Retorna una conexión a la base de datos indicada."""
+    path = DB_PATHS[nombre]
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def init_db():
-    """Inicializa la base de datos local si no existe."""
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sap_productos (
-            codigo TEXT PRIMARY KEY,
-            surtido TEXT,
-            iva REAL,
-            unidad_medida TEXT
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
+# ---------------------------------------------------------------------------
+# Configuración D365
+# ---------------------------------------------------------------------------
 
 def load_d365_config() -> Dict[str, str]:
     if "d365" not in config:
@@ -81,8 +80,6 @@ def load_d365_config() -> Dict[str, str]:
         "client_secret_qa": config["d365"].get("client_secret_qa", ""),
     }
 
-
-def get_access_token_d365():
 def get_access_token_d365() -> str | None:
     d365_config = load_d365_config()
     token_params = {
@@ -91,21 +88,9 @@ def get_access_token_d365() -> str | None:
         "client_secret": d365_config["client_secret_prod"],
         "resource": d365_config["resource"],
     }
+    token_url = d365_config["token_client"]
     try:
         response = requests.post(token_url, data=token_params, timeout=60)
-        response.raise_for_status()
-        token_data = response.json()
-        access_token = token_data['access_token']
-        logging.info("Consulta token a D365 OK")
-        return access_token
-    except requests.exceptions.RequestException as e:
-        logging.info(f"Consulta token a D365 FALLO. {e}")
-        print("Error al obtener el token de acceso:", e)
-        return None
-
-
-def get_access_token_d365_qa():
-        response = requests.post(d365_config["token_client"], data=token_params, timeout=60)
         response.raise_for_status()
         token_data = response.json()
         access_token = token_data["access_token"]
@@ -114,7 +99,6 @@ def get_access_token_d365_qa():
     except requests.exceptions.RequestException as e:  # pragma: no cover - logging
         logging.info("Consulta token a D365 FALLO. %s", e)
         return None
-
 
 def get_access_token_d365_qa() -> str | None:
     d365_config = load_d365_config()
@@ -124,14 +108,9 @@ def get_access_token_d365_qa() -> str | None:
         "client_secret": d365_config["client_secret_qa"],
         "resource": d365_config["resource"],
     }
+    token_url = d365_config["token_client"]
     try:
         response = requests.post(token_url, data=token_params, timeout=60)
-        response.raise_for_status()
-        token_data = response.json()
-        access_token = token_data['access_token']
-        logging.info("Consulta token a D365 OK")
-        return access_token
-        response = requests.post(d365_config["token_client"], data=token_params, timeout=60)
         response.raise_for_status()
         token_data = response.json()
         access_token = token_data["access_token"]
@@ -141,16 +120,460 @@ def get_access_token_d365_qa() -> str | None:
         logging.info("Consulta token a D365 FALLO. %s", e)
         return None
 
+# ---------------------------------------------------------------------------
+# Inicialización de bases
+# ---------------------------------------------------------------------------
+
+def init_db() -> None:
+    """Crea todas las tablas necesarias si aún no existen."""
+    # Productos SAP
+    with conectar_db("sap") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sap_productos (
+                codigo TEXT PRIMARY KEY,
+                surtido TEXT,
+                iva REAL,
+                unidad_medida TEXT
+            )
+            """
+        )
+        conn.commit()
+
+    # Atributos
+    with conectar_db("atributos") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS atributos (
+                product_number TEXT,
+                attribute_name TEXT,
+                attribute_value TEXT
+            )
+            """
+        )
+        conn.commit()
+
+    # Stock
+    with conectar_db("stock") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stock (
+                codigo TEXT,
+                almacen_365 TEXT,
+                stock_fisico REAL,
+                disponible_venta REAL,
+                disponible_entrega REAL,
+                comprometido REAL
+            )
+            """
+        )
+        conn.commit()
+
+    # Grupos de cumplimiento
+    with conectar_db("grupos") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS grupos_cumplimiento (
+                store_locator_group_name TEXT,
+                invent_location_id TEXT
+            )
+            """
+        )
+        conn.commit()
+
+    # Empleados
+    with conectar_db("empleados") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS empleados (
+                email TEXT PRIMARY KEY,
+                nombre_completo TEXT,
+                id_puesto TEXT,
+                empleado_d365 TEXT,
+                numero_sap TEXT,
+                last_store TEXT
+            )
+            """
+        )
+        conn.commit()
+
+    # Tiendas
+    with conectar_db("stores") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stores (
+                almacen_retiro TEXT,
+                sitio_almacen_retiro TEXT,
+                id_tienda TEXT PRIMARY KEY,
+                id_unidad_operativa TEXT,
+                nombre_tienda TEXT,
+                almacen_envio TEXT,
+                sitio_almacen_envio TEXT,
+                direccion_unidad_operativa TEXT,
+                direccion_completa_unidad_operativa TEXT
+            )
+            """
+        )
+        conn.commit()
+
+    # Config POS
+    with conectar_db("pos_config") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS config_pos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tienda_id TEXT NOT NULL,
+                pto_venta_id TEXT NOT NULL,
+                centro_costo TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+
+    # Misceláneos (token, contador)
+    with conectar_db("misc") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tokens (
+                token TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS contador_pdf (
+                id INTEGER PRIMARY KEY CHECK (id=1),
+                valor INTEGER
+            )
+            """
+        )
+        conn.commit()
 
 # ---------------------------------------------------------------------------
-# Persistencia de carrito
+# Funciones de carga masiva
+# ---------------------------------------------------------------------------
+
+def _get_attr(row: Any, attr: str, default: Any = None) -> Any:
+    return getattr(row, attr, row[attr] if isinstance(row, dict) and attr in row else default)
+
+def agregar_atributos_masivo(atributos: Iterable[Any]) -> int:
+    """Inserta atributos en la base local."""
+    with conectar_db("atributos") as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            "INSERT OR REPLACE INTO atributos (product_number, attribute_name, attribute_value) VALUES (?, ?, ?)",
+            [
+                (
+                    _get_attr(a, "ProductNumber"),
+                    _get_attr(a, "AttributeName"),
+                    _get_attr(a, "AttributeValue"),
+                )
+                for a in atributos
+            ],
+        )
+        conn.commit()
+        return cur.rowcount
+
+def agregar_stock_masivo(stock_data: Iterable[Any]) -> int:
+    with conectar_db("stock") as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT OR REPLACE INTO stock
+            (codigo, almacen_365, stock_fisico, disponible_venta, disponible_entrega, comprometido)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    _get_attr(s, "Codigo"),
+                    _get_attr(s, "Almacen_365"),
+                    _get_attr(s, "StockFisico"),
+                    _get_attr(s, "DisponibleVenta"),
+                    _get_attr(s, "DisponibleEntrega"),
+                    _get_attr(s, "Comprometido"),
+                )
+                for s in stock_data
+            ],
+        )
+        conn.commit()
+        return cur.rowcount
+
+def agregar_grupos_cumplimiento_masivo(grupos_data: Iterable[Any]) -> int:
+    with conectar_db("grupos") as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            "INSERT OR REPLACE INTO grupos_cumplimiento (store_locator_group_name, invent_location_id) VALUES (?, ?)",
+            [
+                (
+                    _get_attr(g, "StoreLocatorGroupName"),
+                    _get_attr(g, "InventLocationId"),
+                )
+                for g in grupos_data
+            ],
+        )
+        conn.commit()
+        return cur.rowcount
+
+def agregar_empleados_masivo(empleados: Iterable[Any]) -> int:
+    with conectar_db("empleados") as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT OR REPLACE INTO empleados
+            (empleado_d365, id_puesto, email, nombre_completo, numero_sap, last_store)
+            VALUES (?, ?, ?, ?, ?, COALESCE((SELECT last_store FROM empleados WHERE email = ?), ''))
+            """,
+            [
+                (
+                    _get_attr(e, "Id_Empleado_365"),
+                    _get_attr(e, "Id_Puesto"),
+                    _get_attr(e, "Email"),
+                    _get_attr(e, "Nombre_Completo"),
+                    _get_attr(e, "Numero_SAP"),
+                    _get_attr(e, "Email"),
+                )
+                for e in empleados
+            ],
+        )
+        conn.commit()
+        return cur.rowcount
+
+def agregar_datos_tienda_masivo(stores: Iterable[Any]) -> int:
+    with conectar_db("stores") as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT OR REPLACE INTO stores
+            (almacen_retiro, sitio_almacen_retiro, id_tienda, id_unidad_operativa, nombre_tienda,
+             almacen_envio, sitio_almacen_envio, direccion_unidad_operativa, direccion_completa_unidad_operativa)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    _get_attr(s, "Almacen_Retiro"),
+                    _get_attr(s, "Sitio_Almacen_Retiro"),
+                    _get_attr(s, "Id_Tienda"),
+                    _get_attr(s, "Id_Unidad_Operativa"),
+                    _get_attr(s, "Nombre_Tienda"),
+                    _get_attr(s, "Almacen_Envio"),
+                    _get_attr(s, "Sitio_Almacen_Envio"),
+                    _get_attr(s, "Direccion_Unidad_Operativa"),
+                    _get_attr(s, "Direccion_Completa_Unidad_Operativa"),
+                )
+                for s in stores
+            ],
+        )
+        conn.commit()
+        return cur.rowcount
+
+def agregar_surtido_masivo(productos: Iterable[Dict[str, Any]]) -> int:
+    with conectar_db("sap") as conn:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT OR REPLACE INTO sap_productos (codigo, surtido, iva, unidad_medida)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (
+                    p.get("codigo"),
+                    p.get("surtido"),
+                    p.get("iva"),
+                    p.get("unidad_medida"),
+                )
+                for p in productos
+            ],
+        )
+        conn.commit()
+        return cur.rowcount
+
+# ---------------------------------------------------------------------------
+# Funciones de consulta
+# ---------------------------------------------------------------------------
+
+def obtener_atributos(product_id: int | str) -> List[Dict[str, Any]]:
+    with conectar_db("atributos") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT product_number, attribute_name, attribute_value FROM atributos WHERE product_number = ?",
+            (str(product_id),),
+        )
+        return [
+            {
+                "ProductNumber": r[0],
+                "AttributeName": r[1],
+                "AttributeValue": r[2],
+            }
+            for r in cur.fetchall()
+        ]
+
+def obtener_todos_atributos() -> List[Dict[str, Any]]:
+    with conectar_db("atributos") as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT product_number, attribute_name, attribute_value FROM atributos")
+        return [
+            {
+                "ProductNumber": r[0],
+                "AttributeName": r[1],
+                "AttributeValue": r[2],
+            }
+            for r in cur.fetchall()
+        ]
+
+def obtener_stock() -> List[Dict[str, Any]]:
+    with conectar_db("stock") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT codigo, almacen_365, stock_fisico, disponible_venta, disponible_entrega, comprometido FROM stock"
+        )
+        return [
+            {
+                "codigo": r[0],
+                "almacen_365": r[1],
+                "stock_fisico": r[2],
+                "disponible_venta": r[3],
+                "disponible_entrega": r[4],
+                "comprometido": r[5],
+            }
+            for r in cur.fetchall()
+        ]
+
+def obtener_grupos_cumplimiento(store_group: str) -> List[str]:
+    with conectar_db("grupos") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT invent_location_id FROM grupos_cumplimiento WHERE store_locator_group_name = ?",
+            (store_group,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+def obtener_empleados() -> List[Dict[str, Any]]:
+    with conectar_db("empleados") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT nombre_completo, email, id_puesto, empleado_d365, numero_sap, last_store FROM empleados"
+        )
+        return [
+            {
+                "nombre_completo": r[0],
+                "email": r[1],
+                "id_puesto": r[2],
+                "empleado_d365": r[3],
+                "numero_sap": r[4],
+                "last_store": r[5],
+            }
+            for r in cur.fetchall()
+        ]
+
+def obtener_empleados_by_email(email: str) -> Dict[str, Any] | None:
+    with conectar_db("empleados") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT nombre_completo, email, id_puesto, empleado_d365, numero_sap, last_store
+            FROM empleados WHERE email = ?
+            """,
+            (email.lower(),),
+        )
+        row = cur.fetchone()
+        if row:
+            return {
+                "nombre_completo": row[0],
+                "email": row[1],
+                "id_puesto": row[2],
+                "empleado_d365": row[3],
+                "numero_sap": row[4],
+                "last_store": row[5],
+            }
+        return None
+
+def actualizar_last_store(email: str, store_id: str) -> None:
+    with conectar_db("empleados") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE empleados SET last_store = ? WHERE email = ?",
+            (store_id, email.lower()),
+        )
+        conn.commit()
+
+
+def obtener_stores_from_parquet() -> List[str]:
+    """Devuelve la lista de IDs de tiendas disponibles."""
+    with conectar_db("stores") as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id_tienda FROM stores")
+        return [r[0] for r in cur.fetchall()]
+
+def obtener_datos_tienda_por_id(store_id: str) -> Dict[str, Any] | None:
+    with conectar_db("stores") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT almacen_retiro, sitio_almacen_retiro, id_tienda, id_unidad_operativa, nombre_tienda,
+                   almacen_envio, sitio_almacen_envio, direccion_unidad_operativa, direccion_completa_unidad_operativa
+            FROM stores WHERE id_tienda = ?
+            """,
+            (store_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            return {
+                "almacen_retiro": row[0],
+                "sitio_almacen_retiro": row[1],
+                "id_tienda": row[2],
+                "id_unidad_operativa": row[3],
+                "nombre_tienda": row[4],
+                "almacen_envio": row[5],
+                "sitio_almacen_envio": row[6],
+                "direccion_unidad_operativa": row[7],
+                "direccion_completa_unidad_operativa": row[8],
+            }
+        return None
+
+# ---------------------------------------------------------------------------
+# Tokens y utilidades varias
+# ---------------------------------------------------------------------------
+
+def guardar_token_d365(token: str) -> None:
+    with conectar_db("misc") as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM tokens")
+        cur.execute("INSERT INTO tokens (token, created_at) VALUES (?, datetime('now'))", (token,))
+        conn.commit()
+
+def obtener_token_d365() -> str | None:
+    with conectar_db("misc") as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT token FROM tokens ORDER BY rowid DESC LIMIT 1")
+        row = cur.fetchone()
+        return row[0] if row else None
+
+def obtener_contador_pdf() -> int:
+    with conectar_db("misc") as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT valor FROM contador_pdf WHERE id = 1")
+        row = cur.fetchone()
+        valor = (row[0] if row else 0) + 1
+        cur.execute("INSERT OR REPLACE INTO contador_pdf (id, valor) VALUES (1, ?)", (valor,))
+        conn.commit()
+        return valor
+
+# ---------------------------------------------------------------------------
+# Gestión de carrito de compras
+# ---------------------------------------------------------------------------
 
 CARTS_FILE = os.path.join(ROOT_DIR, "carts.json")
 
-
 def save_cart(user_id: str, cart: dict, timestamp: str) -> bool:
-    """Persist the shopping cart for ``user_id`` in a JSON file."""
-
     data = {}
     if os.path.exists(CARTS_FILE):
         try:
@@ -158,7 +581,6 @@ def save_cart(user_id: str, cart: dict, timestamp: str) -> bool:
                 data = json.load(f)
         except Exception:
             data = {}
-
     data[user_id] = {"cart": cart, "timestamp": timestamp}
     try:
         with open(CARTS_FILE, "w", encoding="utf-8") as f:
@@ -168,10 +590,7 @@ def save_cart(user_id: str, cart: dict, timestamp: str) -> bool:
         logging.error("Error al guardar carrito de %s: %s", user_id, exc)
         return False
 
-
 def get_cart(user_id: str) -> dict:
-    """Retrieve the stored cart for ``user_id`` from the JSON file."""
-
     if not os.path.exists(CARTS_FILE):
         return {"items": []}
     try:
@@ -182,282 +601,140 @@ def get_cart(user_id: str) -> dict:
         logging.error("Error al obtener carrito de %s: %s", user_id, exc)
         return {"items": []}
 
+# ---------------------------------------------------------------------------
+# Config POS helpers
+# ---------------------------------------------------------------------------
 
-__all__ = [
-    "load_d365_config",
-    "get_access_token_d365",
-    "get_access_token_d365_qa",
-    "save_cart",
-    "get_cart",
-]
+def add_config_pos(tienda_id: str, pto_venta_id: str, centro_costo: str) -> int:
+    with conectar_db("pos_config") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO config_pos (tienda_id, pto_venta_id, centro_costo) VALUES (?, ?, ?)",
+            (tienda_id, pto_venta_id, centro_costo),
+        )
+        conn.commit()
+        return cur.lastrowid
 
-    except requests.exceptions.RequestException as e:
-        logging.info(f"Consulta token a D365 FALLO. {e}")
+def get_all_config_pos() -> List[Dict[str, Any]]:
+    with conectar_db("pos_config") as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, tienda_id, pto_venta_id, centro_costo FROM config_pos")
+        return [dict(row) for row in cur.fetchall()]
+
+def get_config_pos_by_ids(tienda_id: str, pto_venta_id: str) -> Dict[str, Any] | None:
+    with conectar_db("pos_config") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, tienda_id, pto_venta_id, centro_costo FROM config_pos WHERE tienda_id = ? AND pto_venta_id = ?",
+            (tienda_id, pto_venta_id),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+def update_config_pos(config_id: int, tienda_id: str, pto_venta_id: str, centro_costo: str) -> bool:
+    with conectar_db("pos_config") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE config_pos SET tienda_id = ?, pto_venta_id = ?, centro_costo = ? WHERE id = ?",
+            (tienda_id, pto_venta_id, centro_costo, config_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+def delete_config_pos(config_id: int) -> bool:
+    with conectar_db("pos_config") as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM config_pos WHERE id = ?", (config_id,))
+        conn.commit()
+        return cur.rowcount > 0
+
+# ---------------------------------------------------------------------------
+# Búsqueda de productos SAP local
+# ---------------------------------------------------------------------------
+
+def buscar_productos_sap(query: str) -> List[Dict[str, Any]]:
+    with conectar_db("sap") as conn:
+        cur = conn.cursor()
+        like = f"%{query}%"
+        cur.execute(
+            "SELECT codigo, surtido, iva, unidad_medida FROM sap_productos WHERE codigo LIKE ? OR surtido LIKE ?",
+            (like, like),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "codigo": r[0],
+                "surtido": r[1],
+                "iva": r[2],
+                "unidad_medida": r[3],
+            }
+            for r in rows
+        ]
+
+def obtener_producto_sap(codigo: str) -> Dict[str, Any] | None:
+    with conectar_db("sap") as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT codigo, surtido, iva, unidad_medida FROM sap_productos WHERE codigo = ?",
+            (codigo,),
+        )
+        row = cur.fetchone()
+        if row:
+            return {
+                "codigo": row[0],
+                "surtido": row[1],
+                "iva": row[2],
+                "unidad_medida": row[3],
+            }
         return None
 
 
+def obtener_producto_por_id(product_id: str) -> Dict[str, Any] | None:
+    """Alias para obtener un producto por su código."""
+    return obtener_producto_sap(product_id)
+
 # ---------------------------------------------------------------------------
-# Funciones de base de datos para configuración de Puntos de Venta
+# Exported names
 # ---------------------------------------------------------------------------
 
-def get_connection():
-    """Devuelve una conexión a la base de datos de configuración."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    """Crea las tablas necesarias si no existen."""
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS config_pos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tienda_id TEXT NOT NULL,
-            pto_venta_id TEXT NOT NULL,
-            centro_costo TEXT NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-
-def add_config_pos(tienda_id: str, pto_venta_id: str, centro_costo: str) -> int:
-    """Inserta una nueva configuración de punto de venta."""
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO config_pos (tienda_id, pto_venta_id, centro_costo) VALUES (?, ?, ?)",
-        (tienda_id, pto_venta_id, centro_costo),
-    )
-    conn.commit()
-    config_id = cur.lastrowid
-    conn.close()
-    return config_id
-
-
-def get_all_config_pos():
-    """Obtiene todas las configuraciones de puntos de venta."""
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT id, tienda_id, pto_venta_id, centro_costo FROM config_pos")
-    rows = [dict(row) for row in cur.fetchall()]
-    conn.close()
-    return rows
-
-
-def get_config_pos_by_ids(tienda_id: str, pto_venta_id: str):
-    """Obtiene una configuración por tienda y punto de venta."""
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id, tienda_id, pto_venta_id, centro_costo FROM config_pos WHERE tienda_id = ? AND pto_venta_id = ?",
-        (tienda_id, pto_venta_id),
-    )
-    row = cur.fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
-def update_config_pos(config_id: int, tienda_id: str, pto_venta_id: str, centro_costo: str) -> bool:
-    """Actualiza una configuración existente."""
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "UPDATE config_pos SET tienda_id = ?, pto_venta_id = ?, centro_costo = ? WHERE id = ?",
-        (tienda_id, pto_venta_id, centro_costo, config_id),
-    )
-    conn.commit()
-    updated = cur.rowcount > 0
-    conn.close()
-    return updated
-
-
-def delete_config_pos(config_id: int) -> bool:
-    """Elimina una configuración por su ID."""
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM config_pos WHERE id = ?", (config_id,))
-    conn.commit()
-    deleted = cur.rowcount > 0
-    conn.close()
-    return deleted
-
-  
-def agregar_surtido_masivo(productos):
-    """Inserta o actualiza un listado de productos SAP."""
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-    cur.executemany(
-        """
-        INSERT OR REPLACE INTO sap_productos (codigo, surtido, iva, unidad_medida)
-        VALUES (?, ?, ?, ?)
-        """,
-        [(
-            p.get('codigo'),
-            p.get('surtido'),
-            p.get('iva'),
-            p.get('unidad_medida'),
-        ) for p in productos],
-    )
-    conn.commit()
-    total = cur.rowcount
-    conn.close()
-    return total
-
-
-def buscar_productos_sap(query):
-    """Busca productos SAP que coincidan con el texto indicado."""
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-    like = f"%{query}%"
-    cur.execute(
-        "SELECT codigo, surtido, iva, unidad_medida FROM sap_productos WHERE codigo LIKE ? OR surtido LIKE ?",
-        (like, like),
-    )
-    rows = cur.fetchall()
-    conn.close()
-    return [
-        {
-            'codigo': r[0],
-            'surtido': r[1],
-            'iva': r[2],
-            'unidad_medida': r[3],
-        }
-        for r in rows
-    ]
-
-
-def obtener_producto_sap(codigo):
-    """Obtiene un único producto SAP por código."""
-    conn = sqlite3.connect(DB_FILE)
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT codigo, surtido, iva, unidad_medida FROM sap_productos WHERE codigo = ?",
-        (codigo,),
-    )
-    row = cur.fetchone()
-    conn.close()
-    if row:
-        return {
-            'codigo': row[0],
-            'surtido': row[1],
-            'iva': row[2],
-            'unidad_medida': row[3],
-
-# ---- Gestión de pagos ----
-PAGOS_FILE = os.path.join(ROOT_DIR, "pagos.json")
-OPERACIONES_FILE = os.path.join(ROOT_DIR, "operaciones.json")
-
-
-def _read_json(path, default):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return default
-
-
-def guardar_pago(operacion_id, pagos):
-    """Guarda el detalle de un pago en un archivo JSON."""
-    data = _read_json(PAGOS_FILE, [])
-    data.append({"operacion_id": operacion_id, **pagos})
-    with open(PAGOS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def actualizar_estado_operacion(operacion_id, estado):
-    """Actualiza el estado de una operación en un archivo JSON."""
-    data = _read_json(OPERACIONES_FILE, {})
-    data[str(operacion_id)] = estado
-    with open(OPERACIONES_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-def obtener_facturas_emitidas(fecha_inicio, fecha_fin):
-    """Devuelve una lista simulada de facturas emitidas entre fechas."""
-    return [
-        {
-            "fecha": fecha_inicio,
-            "numero": "F0001",
-            "vendedor": "Juan",
-            "monto": 1000.0,
-        },
-        {
-            "fecha": fecha_fin,
-            "numero": "F0002",
-            "vendedor": "Ana",
-            "monto": 2000.0,
-        },
-    ]
-
-
-def obtener_saldos_por_vendedor(fecha_inicio, fecha_fin):
-    """Devuelve saldos simulados por vendedor en el rango de fechas."""
-    return [
-        {"vendedor": "Juan", "saldo": 500.0},
-        {"vendedor": "Ana", "saldo": 1500.0},
-    ]
-
-DB_PATH = os.path.join(ROOT_DIR, 'clientes.db')
-
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        '''CREATE TABLE IF NOT EXISTS clientes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            dni TEXT NOT NULL,
-            cuit TEXT UNIQUE NOT NULL,
-            direccion TEXT
-        )'''
-    )
-    conn.commit()
-    conn.close()
-
-
-def guardar_cliente(datos):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        'INSERT INTO clientes (nombre, dni, cuit, direccion) VALUES (?,?,?,?)',
-        (datos['nombre'], datos['dni'], datos['cuit'], datos.get('direccion'))
-    )
-    conn.commit()
-    conn.close()
-
-
-def actualizar_cliente(cuit, datos):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        'UPDATE clientes SET nombre=?, dni=?, cuit=?, direccion=? WHERE cuit=?',
-        (
-            datos['nombre'],
-            datos['dni'],
-            datos['cuit'],
-            datos.get('direccion'),
-            cuit,
-        )
-    )
-    conn.commit()
-    conn.close()
-
-
-def buscar_cliente_por_cuit(cuit):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT nombre, dni, cuit, direccion FROM clientes WHERE cuit=?', (cuit,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return {
-            'nombre': row[0],
-            'dni': row[1],
-            'cuit': row[2],
-            'direccion': row[3]
-        }
-    return None
+__all__ = [
+    # Configuración D365
+    "load_d365_config",
+    "get_access_token_d365",
+    "get_access_token_d365_qa",
+    # Inicialización
+    "init_db",
+    # Carga masiva
+    "agregar_atributos_masivo",
+    "agregar_stock_masivo",
+    "agregar_grupos_cumplimiento_masivo",
+    "agregar_empleados_masivo",
+    "agregar_datos_tienda_masivo",
+    "agregar_surtido_masivo",
+    # Consultas
+    "obtener_atributos",
+    "obtener_todos_atributos",
+    "obtener_stock",
+    "obtener_grupos_cumplimiento",
+    "obtener_empleados",
+    "obtener_empleados_by_email",
+    "actualizar_last_store",
+    "obtener_stores_from_parquet",
+    "obtener_datos_tienda_por_id",
+    # Misceláneos
+    "guardar_token_d365",
+    "obtener_token_d365",
+    "obtener_contador_pdf",
+    "save_cart",
+    "get_cart",
+    # Config POS
+    "add_config_pos",
+    "get_all_config_pos",
+    "get_config_pos_by_ids",
+    "update_config_pos",
+    "delete_config_pos",
+    # Productos SAP
+    "buscar_productos_sap",
+    "obtener_producto_sap",
+    "obtener_producto_por_id",
+]
