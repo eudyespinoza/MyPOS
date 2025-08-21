@@ -1653,7 +1653,6 @@ app.register_blueprint(secuencia_bp, url_prefix='/api/secuencias')
 app.register_blueprint(config_pos_bp, url_prefix='/api/config_pos')
 app.register_blueprint(pagos_bp, url_prefix='/pagos')
 app.register_blueprint(caja_bp, url_prefix='/caja')
-app.register_blueprint(pagos_bp, url_prefix='/pagos')
 app.register_blueprint(clientes_bp, url_prefix='/clientes')
 
 # 🔹 Ejecutar la aplicación
