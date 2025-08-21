@@ -4,3 +4,4 @@ pyodbc
 requests
 apscheduler
 gunicorn
+pymongo>=4.0
