@@ -16,7 +16,11 @@ import sqlite3
 import configparser
 from typing import Dict, Iterable, List, Any
 
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 import requests
+
+from config import CACHE_FILE_PRODUCTOS
 
 # ---------------------------------------------------------------------------
 # Configuración y logging
@@ -54,6 +58,20 @@ DB_PATHS = {
     "pos_config": os.path.join(ROOT_DIR, "pos_config.db"),
     "clientes": os.path.join(ROOT_DIR, "clientes.db"),
     "pagos": os.path.join(ROOT_DIR, "pagos.db"),
+}
+
+PRODUCT_COLUMN_MAPPING = {
+    "Número de Producto": "numero_producto",
+    "Nombre de Categoría de Producto": "categoria_producto",
+    "Nombre del Producto": "nombre_producto",
+    "Grupo de Cobertura": "grupo_cobertura",
+    "Unidad de Medida": "unidad_medida",
+    "PrecioFinalConIVA": "precio_final_con_iva",
+    "PrecioFinalConDescE": "precio_final_con_descuento",
+    "StoreNumber": "store_number",
+    "TotalDisponibleVenta": "total_disponible_venta",
+    "Signo": "signo",
+    "Multiplo": "multiplo",
 }
 
 
@@ -568,11 +586,16 @@ def actualizar_last_store(email: str, store_id: str) -> None:
 
 
 def obtener_stores_from_parquet() -> List[str]:
-    """Devuelve la lista de IDs de tiendas disponibles."""
-    with conectar_db("stores") as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT id_tienda FROM stores")
-        return [r[0] for r in cur.fetchall()]
+    """Devuelve la lista de IDs de tiendas disponibles desde el Parquet de productos."""
+    if not os.path.exists(CACHE_FILE_PRODUCTOS):
+        return []
+
+    table = pq.read_table(CACHE_FILE_PRODUCTOS)
+    renamed_table = table.rename_columns(
+        [PRODUCT_COLUMN_MAPPING.get(col, col) for col in table.column_names]
+    )
+    stores = pc.unique(renamed_table["store_number"]).to_pylist()
+    return [s for s in stores if s]
 
 def obtener_datos_tienda_por_id(store_id: str) -> Dict[str, Any] | None:
     with conectar_db("stores") as conn:
@@ -599,6 +622,23 @@ def obtener_datos_tienda_por_id(store_id: str) -> Dict[str, Any] | None:
                 "direccion_completa_unidad_operativa": row[8],
             }
         return None
+
+
+def obtener_equivalencia() -> List[Dict[str, Any]]:
+    """Devuelve lista de productos con su multiplo desde el Parquet."""
+    if not os.path.exists(CACHE_FILE_PRODUCTOS):
+        return []
+
+    table = pq.read_table(CACHE_FILE_PRODUCTOS)
+    renamed_table = table.rename_columns(
+        [PRODUCT_COLUMN_MAPPING.get(col, col) for col in table.column_names]
+    )
+    eq_table = renamed_table.select(["numero_producto", "multiplo"])
+    data = eq_table.to_pydict()
+    return [
+        {"numero_producto": num, "multiplo": mult}
+        for num, mult in zip(data["numero_producto"], data["multiplo"])
+    ]
 
 # ---------------------------------------------------------------------------
 # Tokens y utilidades varias
@@ -905,6 +945,7 @@ __all__ = [
     "actualizar_last_store",
     "obtener_stores_from_parquet",
     "obtener_datos_tienda_por_id",
+    "obtener_equivalencia",
     # Misceláneos
     "guardar_token_d365",
     "obtener_token_d365",
