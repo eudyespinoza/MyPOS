@@ -1,9 +1,6 @@
 from flask import Blueprint, request, jsonify, session, render_template, send_file
 from auth_module import login_required
-from db.database import (
-    obtener_facturas_emitidas,
-    obtener_saldos_por_vendedor,
-)
+from db.database import obtener_facturas_emitidas, obtener_saldos_por_vendedor
 from io import BytesIO
 
 caja_bp = Blueprint("caja", __name__)

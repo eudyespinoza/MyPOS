@@ -3,7 +3,6 @@ import os
 from functools import wraps
 from flask import Blueprint, request, jsonify, session, redirect, url_for, flash, render_template
 from pymongo import MongoClient
-from pymongo.errors import PyMongoError
 from auth_module import ldap_authenticate  # Reusa LDAP existente
 from db.database import obtener_empleados_by_email
 from auth import login_required
