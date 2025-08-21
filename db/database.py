@@ -500,10 +500,10 @@ def obtener_stock() -> List[Dict[str, Any]]:
             {
                 "codigo": r[0],
                 "almacen_365": r[1],
-                "stock_fisico": r[2],
-                "disponible_venta": r[3],
-                "disponible_entrega": r[4],
-                "comprometido": r[5],
+                "stock_fisico": float(r[2]),
+                "disponible_venta": float(r[3]),
+                "disponible_entrega": float(r[4]),
+                "comprometido": float(r[5]),
             }
             for r in cur.fetchall()
         ]

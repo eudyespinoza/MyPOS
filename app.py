@@ -83,6 +83,14 @@ def cache_set_table(key, table, ex=3600):
     pq.write_table(table, buffer)
     redis_client.set(key, buffer.getvalue(), ex=ex)
 
+
+def formatear_moneda(valor: float) -> str:
+    """Devuelve ``valor`` con dos decimales como cadena."""
+    try:
+        return f"{float(valor):.2f}"
+    except (TypeError, ValueError):
+        return "0.00"
+
 # 🔹 Inicializar la base de datos
 init_db()
 
@@ -219,7 +227,16 @@ def actualizar_cache_stock():
         if not stock_data:
             logger.warning("No se encontraron datos de stock para actualizar el caché.")
             return
-        data = {key: [item[key] for item in stock_data] for key in stock_data[0].keys()}
+        numeric_fields = {
+            "stock_fisico",
+            "disponible_venta",
+            "disponible_entrega",
+            "comprometido",
+        }
+        data = {
+            key: [float(item[key]) if key in numeric_fields else item[key] for item in stock_data]
+            for key in stock_data[0].keys()
+        }
         table = pa.Table.from_pydict(data)
         pq.write_table(table, CACHE_FILE_STOCK)
         logger.info("Cache de stock actualizada en formato Parquet.")
@@ -236,14 +253,40 @@ def obtener_stock_cache():
         if mod_time == datetime.date.today():
             try:
                 table = load_stock_to_memory()
-                stock = [{col: table[col][i].as_py() for col in table.column_names} for i in range(len(table))]
+                numeric_fields = {
+                    "stock_fisico",
+                    "disponible_venta",
+                    "disponible_entrega",
+                    "comprometido",
+                }
+                stock = [
+                    {
+                        col: float(table[col][i].as_py())
+                        if col in numeric_fields
+                        else table[col][i].as_py()
+                        for col in table.column_names
+                    }
+                    for i in range(len(table))
+                ]
                 return stock
             except Exception as e:
                 logger.error(f"Error al leer caché de stock desde Parquet: {e}", exc_info=True)
     actualizar_cache_stock()
     try:
         table = load_stock_to_memory()
-        stock = [{col: table[col][i].as_py() for col in table.column_names} for i in range(len(table))]
+        numeric_fields = {
+            "stock_fisico",
+            "disponible_venta",
+            "disponible_entrega",
+            "comprometido",
+        }
+        stock = [
+            {
+                col: float(table[col][i].as_py()) if col in numeric_fields else table[col][i].as_py()
+                for col in table.column_names
+            }
+            for i in range(len(table))
+        ]
         return stock
     except Exception as e:
         logger.error(f"Error al leer caché de stock desde Parquet después de actualización: {e}", exc_info=True)
@@ -619,8 +662,20 @@ def api_stock_codigo_store(codigo, store):
                     "disponible_entrega": 0.00,
                     "comprometido": 0.00
                 })
-        logger.info(f"Se encontraron {len(stock_filtrado)} registros de stock para el código '{codigo_normalizado}' y store '{store}'.")
-        return jsonify(stock_filtrado)
+        formatted_stock = [
+            {
+                **item,
+                "stock_fisico": formatear_moneda(item["stock_fisico"]),
+                "disponible_venta": formatear_moneda(item["disponible_venta"]),
+                "disponible_entrega": formatear_moneda(item["disponible_entrega"]),
+                "comprometido": formatear_moneda(item["comprometido"]),
+            }
+            for item in stock_filtrado
+        ]
+        logger.info(
+            f"Se encontraron {len(stock_filtrado)} registros de stock para el código '{codigo_normalizado}' y store '{store}'."
+        )
+        return jsonify(formatted_stock)
     except Exception as e:
         logger.error(f"Error en búsqueda de stock desde Parquet: {e}", exc_info=True)
         return jsonify({"error": f"Error interno: {str(e)}"}), 500
@@ -631,7 +686,20 @@ def api_stock_categoria(categoria_id):
     """Endpoint que retorna el stock de una categoría."""
     try:
         datos = obtener_stock_categoria(categoria_id)
-        return jsonify(datos)
+        numeric_fields = {
+            "stock_fisico",
+            "disponible_venta",
+            "disponible_entrega",
+            "comprometido",
+        }
+        formatted = [
+            {
+                **item,
+                **{field: formatear_moneda(item[field]) for field in numeric_fields if field in item},
+            }
+            for item in datos
+        ]
+        return jsonify(formatted)
     except Exception as e:
         logger.error(f"Error al obtener stock por categoría: {e}", exc_info=True)
         return jsonify({"error": f"Error interno: {str(e)}"}), 500
