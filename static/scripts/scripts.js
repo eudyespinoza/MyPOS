@@ -776,7 +776,7 @@ async function loadProducts(storeId, page = 1, itemsPerPage = 20000, showSpinner
             showSpinner();
             spinnerShown = true;
         }
-        const response = await fetch(`/api/productos?store=${storeId}&page=${page}&items_per_page=${itemsPerPage}`);
+        const response = await fetchWithAuth(`/api/productos?store=${storeId}&page=${page}&items_per_page=${itemsPerPage}`);
         if (!response.ok) {
             throw new Error("Error al cargar productos");
         }
@@ -804,7 +804,7 @@ async function loadProducts(storeId, page = 1, itemsPerPage = 20000, showSpinner
         // Actualizar precios en el carrito...
         updateCartPrices(storeId);
         // Actualizar lastProductsUpdate...
-        const updateResponse = await fetch('/api/check_products_update');
+        const updateResponse = await fetchWithAuth('/api/check_products_update');
         if (updateResponse.ok) {
             const updateData = await updateResponse.json();
             lastProductsUpdate = updateData.last_modified;
