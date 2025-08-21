@@ -1,8 +1,25 @@
 from flask import Flask, render_template, redirect, url_for, session, jsonify, request, send_from_directory, flash, send_file
-from db.database import init_db, obtener_atributos, obtener_stores_from_parquet, obtener_stock, \
-    obtener_grupos_cumplimiento, obtener_empleados, obtener_todos_atributos, guardar_token_d365, obtener_token_d365, \
-    obtener_producto_por_id, get_config_pos_by_ids
-    obtener_producto_por_id, buscar_productos_sap, obtener_producto_sap
+from db.database import (
+    init_db,
+    obtener_atributos,
+    obtener_stores_from_parquet,
+    obtener_stock,
+    obtener_grupos_cumplimiento,
+    obtener_empleados,
+    obtener_todos_atributos,
+    guardar_token_d365,
+    obtener_token_d365,
+    obtener_producto_por_id,
+    get_config_pos_by_ids,
+    buscar_productos_sap,
+    obtener_producto_sap,
+    obtener_datos_tienda_por_id,
+    obtener_empleados_by_email,
+    actualizar_last_store,
+    obtener_contador_pdf,
+    save_cart,
+    get_cart,
+)
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
@@ -16,6 +33,8 @@ from blueprints.secuencia_numerica import secuencia_bp
 from blueprints.config_pos import config_pos_bp
 from blueprints.pagos import pagos_bp
 from blueprints.simulador import simulador_bp
+from blueprints.caja import caja_bp
+from blueprints.clientes import clientes_bp
 from connectors.d365_interface import (
     run_crear_presupuesto_batch,
     run_obtener_presupuesto_d365,
@@ -24,25 +43,11 @@ from connectors.d365_interface import (
     run_alta_cliente_d365,
     guardar_numero_presupuesto,
     obtener_numeros_presupuesto,
-)
     guardar_presupuesto_local,
     obtener_presupuestos_locales,
 )
-from blueprints.caja import caja_bp
-from blueprints.pagos import pagos_bp
-from blueprints.clientes import clientes_bp
-from connectors.d365_interface import run_crear_presupuesto_batch, run_obtener_presupuesto_d365, run_actualizar_presupuesto_d365, run_validar_cliente_existente, run_alta_cliente_d365
 from connectors.get_token import get_access_token_d365, get_access_token_d365_qa
-from db.database import obtener_datos_tienda_por_id, obtener_empleados_by_email, actualizar_last_store, obtener_contador_pdf, save_cart, get_cart
 from werkzeug.utils import secure_filename
-from db.database import (
-    obtener_datos_tienda_por_id,
-    obtener_empleados_by_email,
-    actualizar_last_store,
-    obtener_contador_pdf,
-    save_cart,
-    get_cart,
-)
 from functools import lru_cache
 from services.email_service import enviar_correo_fallo
 from services.search_service import indexar_productos, buscar_productos
@@ -58,9 +63,14 @@ import threading
 from datetime import timedelta, timezone
 import json
 import requests
-import io
 import redis
-from config import CACHE_FILE_PRODUCTOS, CACHE_FILE_STOCK, CACHE_FILE_CLIENTES, CACHE_FILE_EMPLEADOS, CACHE_FILE_ATRIBUTOS
+from config import (
+    CACHE_FILE_PRODUCTOS,
+    CACHE_FILE_STOCK,
+    CACHE_FILE_CLIENTES,
+    CACHE_FILE_EMPLEADOS,
+    CACHE_FILE_ATRIBUTOS,
+)
 
 clientes_lock = threading.Lock()
 
