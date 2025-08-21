@@ -726,13 +726,19 @@ def api_productos():
         offset = (page - 1) * items_per_page
 
         if not os.path.exists(CACHE_FILE_PRODUCTOS):
-            logger.error(f"El archivo Parquet no existe en la ruta: {CACHE_FILE_PRODUCTOS}")
-            return jsonify({"error": f"Archivo de caché no encontrado: {CACHE_FILE_PRODUCTOS}"}), 500
+            msg_detail = f"El archivo Parquet no existe en la ruta: {CACHE_FILE_PRODUCTOS}"
+            logger.error(msg_detail)
+            user_msg = "Caché de productos no encontrada. Usa la opción de reconstrucción para generar una nueva."
+            flash(user_msg, "warning")
+            return jsonify({"productos": [], "message": user_msg}), 404
 
         logger.info(f"Intentando leer el archivo Parquet de productos desde: {CACHE_FILE_PRODUCTOS}")
         table = obtener_productos_cache()
         if table is None:
-            return jsonify({"error": "No se pudo cargar los productos desde el archivo Parquet"}), 500
+            user_msg = "No se pudo cargar la caché de productos. Usa la opción de reconstrucción para generar una nueva."
+            logger.error("No se pudo cargar los productos desde el archivo Parquet")
+            flash(user_msg, "warning")
+            return jsonify({"productos": [], "message": user_msg}), 500
 
         store_filter = pc.match_substring(pc.field('store_number'), store)
         filtered_table = table.filter(store_filter)
@@ -767,6 +773,22 @@ def api_productos():
     except Exception as e:
         logger.error(f"Error en búsqueda de productos desde Parquet: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/productos/rebuild-cache', methods=['POST'])
+@login_required
+def api_productos_rebuild_cache():
+    """Reconstruye la caché de productos desde la fuente de datos."""
+    try:
+        actualizar_cache_productos()
+        msg = "Caché de productos reconstruida correctamente."
+        flash(msg, "success")
+        return jsonify({"message": msg}), 200
+    except Exception as e:
+        logger.error(f"Error al reconstruir caché de productos: {e}", exc_info=True)
+        user_msg = "No se pudo reconstruir la caché de productos."
+        flash(user_msg, "error")
+        return jsonify({"error": user_msg}), 500
 
 @app.route('/api/create_quotation', methods=['POST'])
 @login_required
